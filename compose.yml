@@ -16,6 +16,7 @@ services:
       - LLM_API_BASE=http://ollama:11434/v1
       # Set PYTHONPATH to ensure imports work correctly from the project root
       - PYTHONPATH=/app/src
+      - DOCKER_CONTAINER=true
     depends_on:
       ollama:
         condition: service_healthy
@@ -47,7 +48,9 @@ services:
       retries: 5
 
   blender_runner:
-    image: lscr.io/linuxserver/blender:latest
+    build:
+      context: ./blender
+      dockerfile: Dockerfile.custom
     runtime: nvidia # Add this for GPU support
     volumes:
       # Mount the workspace to share scripts and outputs

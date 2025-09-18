@@ -1,0 +1,29 @@
+# Use a base image with Python installed
+FROM nvidia/opengl:1.2-glvnd-runtime-ubuntu22.04
+
+# Install necessary packages for Blender (e.g., X11 libs for headless rendering)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libxrender1 libxi6 libxfixes3 libxau6 libxdmcp6 libxcb1 libxext6 libxrandr2 libxcursor1 libxinerama1 libxxf86vm1 \
+    libglu1-mesa libgl1 bzip2 wget xz-utils libxkbcommon0 libsm6 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Download and extract Blender
+ARG BLENDER_VERSION=3.6.5
+ARG BLENDER_URL=https://download.blender.org/release/Blender${BLENDER_VERSION%.*}/blender-${BLENDER_VERSION}-linux-x64.tar.xz
+RUN mkdir /opt/blender &&     wget --no-check-certificate ${BLENDER_URL} -O /tmp/blender.tar.xz &&     tar -xJ --strip-components=1 -f /tmp/blender.tar.xz -C /opt/blender &&     rm /tmp/blender.tar.xz
+
+# Set Blender as executable in PATH
+ENV PATH="/opt/blender:${PATH}"
+
+# Set working directory
+WORKDIR /app
+
+# Create a non-root user
+RUN groupadd -g 911 appuser && useradd -u 911 -g appuser -m appuser
+RUN chown -R appuser:appuser /app
+
+# Switch to non-root user
+USER appuser
+
+# Command to keep container running (optional, for debugging)
+# CMD ["tail", "-f", "/dev/null"]

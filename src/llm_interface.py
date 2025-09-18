@@ -7,9 +7,10 @@ from prompt_templates import PROMPT_TEMPLATES
 class LLMInterface:
     def __init__(self):
         # Docker Compose에서 설정한 환경 변수를 사용하여 Ollama 서버에 연결
+        llm_api_base = os.getenv("LLM_API_BASE", "http://localhost:11435/v1") # Default for local testing
         self.client = openai.OpenAI(
-            base_url=os.getenv("LLM_API_BASE"),
-            api_key="ollama",  # Ollama는 API 키가 필요 없지만, 라이브러리 형식상 값을 제공해야 합니다.
+            base_url=llm_api_base,
+            api_key="sk-no-key-required",  # Ollama는 API 키가 필요 없지만, 라이브러리 형식상 값을 제공해야 합니다.
         )
 
     def generate_code(self, task_name: str, params: dict):
@@ -23,18 +24,37 @@ class LLMInterface:
         Returns:
             str: 생성된 Python 코드
         """
-        prompt = PROMPT_TEMPLATES.get(task_name).format(**params)
+        print(f"[LLMInterface] generate_code called with task_name: {task_name}, params: {params}")
+        
+        if task_name == "extract_vfx_params" or task_name == "blender_style_script": # Handle style script as well
+            prompt = PROMPT_TEMPLATES.get(task_name).format(**params)
+        else:
+            # For other tasks, LLM is not used for code generation directly
+            # This branch should ideally not be reached for blender_simulation_script and blender_simulation_preview_script
+            prompt = "" # Or raise an error, depending on desired behavior
+        
+        print(f"[LLMInterface] Prompt being sent to LLM: {prompt[:200]}...") # Print first 200 chars of prompt
         
         try:
+            messages = [
+                {"role": "system", "content": "You are a helpful assistant that generates Python code based on user requests."},
+                {"role": "user", "content": prompt}
+            ]
+            print(f"[LLMInterface] Messages being sent to LLM: {messages}") # Add this line
             # TODO: 사용할 모델을 Ollama에서 설정/다운로드한 모델명으로 변경해야 합니다. (예: "llama3")
             response = self.client.chat.completions.create(
                 model="llama3", 
-                messages=[
-                    {"role": "system", "content": "You are a helpful assistant that generates Python code based on user requests."},
-                    {"role": "user", "content": prompt}
-                ]
+                messages=messages
             )
-            return response.choices[0].message.content
+            generated_content = response.choices[0].message.content
+            # Strip any leading conversational text or markdown code blocks
+            if generated_content.startswith("Here is the requested Python script:") or generated_content.startswith("Here is the Python script:"):
+                generated_content = generated_content.replace("Here is the requested Python script:", "", 1).strip()
+            if generated_content.startswith("```python"):
+                generated_content = generated_content.replace("```python", "", 1).strip()
+            if generated_content.endswith("```"):
+                generated_content = generated_content[:-3].strip()
+            return generated_content
         except Exception as e:
             print(f"LLM 코드 생성 오류: {e}")
             return ""
