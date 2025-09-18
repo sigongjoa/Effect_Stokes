@@ -1,5 +1,6 @@
 # main.py
 import json
+import subprocess
 from llm_interface import LLMInterface
 from simulation_agent import SimulationAgent
 from style_agent import StyleAgent
