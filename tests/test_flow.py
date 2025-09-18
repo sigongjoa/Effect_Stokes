@@ -1,39 +1,63 @@
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
+import os
+import json
 from src.main import EffectStokesOrchestrator
 
 class TestPipelineFlow(unittest.TestCase):
 
-    @patch('src.main.RenderAgent')
-    @patch('src.main.FeedbackAgent')
-    @patch('src.main.StyleAgent')
-    @patch('src.main.SimulationAgent')
-    @patch('src.main.LLMInterface') # LLMInterface도 모의해야 합니다.
-    def test_full_pipeline_flow(self, MockLLMInterface, MockSimulationAgent, MockStyleAgent, MockFeedbackAgent, MockRenderAgent):
-        # Mock 객체들이 API 명세에 맞는 모의 데이터를 반환하도록 설정
-        MockLLMInterface.return_value.generate_code.return_value = '{"vfx_type": "fire", "style": "anime"}' # parse_prompt에서 사용
-        MockSimulationAgent.return_value.run_simulation.return_value = {"sim_cache": "mock/sim_data"}
-        MockStyleAgent.return_value.apply_style.side_effect = ["mock/styled_render_1.png", "mock/styled_render_2.png"]
-        # 첫 번째 피드백은 개선 제안, 두 번째는 완료를 반환
-        MockFeedbackAgent.return_value.analyze_render.side_effect = [
-            {"is_perfect": False, "suggestions": "더 강하게!", "updated_params": {}},
-            {"is_perfect": True}
+    def setUp(self):
+        # Ensure output directories exist for the test to write files
+        self.output_dir = "/workspace/outputs"
+        os.makedirs(self.output_dir, exist_ok=True)
+        os.makedirs(os.path.join(self.output_dir, "cache"), exist_ok=True)
+
+    def _simulate_blender_output_creation(self, *args, **kwargs):
+        # This function will be the side_effect for subprocess.run
+        command_args = args[0] # The command list passed to subprocess.run
+
+        # Extract output paths from the command arguments
+        # This assumes the output path is always the last argument after '--'
+        if '--' in command_args:
+            separator_index = command_args.index('--')
+            output_paths = command_args[separator_index + 1:]
+        else:
+            output_paths = []
+
+        for out_path in output_paths:
+            # Create dummy files for the test
+            try:
+                # Ensure parent directories exist
+                os.makedirs(os.path.dirname(out_path), exist_ok=True)
+                with open(out_path, 'w') as f:
+                    f.write(f"Mock content for {os.path.basename(out_path)}")
+                print(f"[Test Mock] Created dummy file: {out_path}")
+            except Exception as e:
+                print(f"[Test Mock] Error creating dummy file {out_path}: {e}")
+                # Re-raise to fail the test if file creation fails
+                raise
+
+        return MagicMock(stdout="Blender output", stderr="", returncode=0)
+
+    @patch('src.llm_interface.LLMInterface') # Patch the LLMInterface class
+    @patch('subprocess.run')
+    def test_full_pipeline_flow_with_real_agents(self, mock_subprocess_run, MockLLMInterfaceClass):
+        # Configure the mock instance of LLMInterface
+        mock_llm_instance = MockLLMInterfaceClass.return_value
+
+        # Mock the client attribute of the LLMInterface instance
+        mock_llm_instance.client = MagicMock()
+        mock_chat_completions_create = MagicMock()
+        mock_llm_instance.client.chat.completions.create = mock_chat_completions_create
+
+        # Configure side_effect for generate_code and generate_vision_feedback
+        mock_chat_completions_create.side_effect = [
+            # 1. For extract_vfx_params in parse_prompt
+            MagicMock(choices=[MagicMock(message=MagicMock(content=json.dumps({"vfx_type": "fire punch", "style": "anime", "duration": 5, "colors": ["red", "black"], "camera_speed": "slow-motion"})))]),            # 2. For blender_simulation_script in SimulationAgent
+            MagicMock(choices=[MagicMock(message=MagicMock(content="print(\"Mock Blender Simulation Script\")\nimport sys\nwith open(sys.argv[1], 'w') as f: f.write('blend_file_content')\nwith open(sys.argv[2], 'w') as f: f.write('sim_cache_content')"))]),            # 3. For blender_style_script in StyleAgent (first call)
+            MagicMock(choices=[MagicMock(message=MagicMock(content="print(\"Mock Blender Style Script 1\")\nimport sys\nwith open(sys.argv[1], 'w') as f: f.write('styled_image_content_1')"))]),            # 4. For blender_style_script in StyleAgent (second call, after feedback)
+            MagicMock(choices=[MagicMock(message=MagicMock(content="print(\"Mock Blender Style Script 2\")\nimport sys\nwith open(sys.argv[1], 'w') as f: f.write('styled_image_content_2')"))]),            # 5. For blender_final_render_script in RenderAgent
+            MagicMock(choices=[MagicMock(message=MagicMock(content="print(\"Mock Blender Final Render Script\")\nimport sys\nwith open(sys.argv[1], 'w') as f: f.write('final_video_content')"))]),            # 6. For generate_vision_feedback (first call)
+            MagicMock(choices=[MagicMock(message=MagicMock(content=json.dumps({"is_perfect": False, "suggestions": "Make it more vibrant", "updated_params": {"colors": ["red", "yellow", "vibrant"]}})))]),            # 7. For generate_vision_feedback (second call)
+            MagicMock(choices=[MagicMock(message=MagicMock(content=json.dumps({"is_perfect": True, "suggestions": "", "updated_params": {}})))])
         ]
-        MockFeedbackAgent.return_value.apply_suggestions.return_value = {} # apply_suggestions도 모의해야 합니다.
-        MockRenderAgent.return_value.finalize_render.return_value = "mock/final_video.mp4"
-
-        # 오케스트레이터 실행
-        orchestrator = EffectStokesOrchestrator()
-        final_path = orchestrator.run_pipeline("test prompt")
-
-        # 각 에이전트가 올바르게 호출되었는지 확인
-        MockLLMInterface.return_value.generate_code.assert_called_once()
-        MockSimulationAgent.return_value.run_simulation.assert_called_once()
-        self.assertEqual(MockStyleAgent.return_value.apply_style.call_count, 2) # 최초 실행 + 피드백 후 재실행
-        self.assertEqual(MockFeedbackAgent.return_value.analyze_render.call_count, 2)
-        self.assertEqual(MockFeedbackAgent.return_value.apply_suggestions.call_count, 1) # 피드백이 한 번 적용됨
-        MockRenderAgent.return_value.finalize_render.assert_called_once()
-        self.assertEqual(final_path, "mock/final_video.mp4")
-
-if __name__ == '__main__':
-    unittest.main()

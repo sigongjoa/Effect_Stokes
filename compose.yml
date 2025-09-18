@@ -3,18 +3,24 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    user: "appuser" # Use the user created in Dockerfile
     volumes:
       # Mount the whole project directory for development
       - .:/app
       # Mount the docker socket to allow app to control docker
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
+      - PUID=911
+      - PGID=911
+      - GROUP_ID=108 # Add this line
       - LLM_API_BASE=http://ollama:11434/v1
       # Set PYTHONPATH to ensure imports work correctly from the project root
       - PYTHONPATH=/app/src
     depends_on:
       ollama:
         condition: service_healthy
+    ports:
+      - "8000:8000"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://ollama:11434"]
       interval: 10s
@@ -41,9 +47,8 @@ services:
       retries: 5
 
   blender_runner:
-    build:
-      context: .
-      dockerfile: blender/Dockerfile
+    image: lscr.io/linuxserver/blender:latest
+    runtime: nvidia # Add this for GPU support
     volumes:
       # Mount the workspace to share scripts and outputs
       - ./workspace:/workspace
@@ -54,8 +59,7 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
-    # This service is for on-demand runs. This default command just prints the version.
-    command: ["--version"]
+    # No command needed, as the image handles its own entrypoint.
 
 volumes:
   ollama_data:

@@ -4,6 +4,17 @@ FROM python:3.12-slim
 # Set the working directory in the container
 WORKDIR /app
 
+# Create a non-root user and group with UID/GID 911
+RUN groupadd -g 911 appuser && useradd -u 911 -g appuser -m appuser
+
+# Create /workspace and set ownership for appuser
+RUN mkdir -p /workspace && chown appuser:appuser /workspace
+
+# Create a group with the host's docker GID (108)
+RUN groupadd -g 108 docker_host_group || true
+# Add the appuser to this docker_host_group
+RUN usermod -a -G docker_host_group appuser
+
 # Install dependencies for adding docker repository
 RUN apt-get update && apt-get install -y ca-certificates curl
 
@@ -29,4 +40,4 @@ RUN apt-get update && apt-get install -y docker-ce-cli && \
 COPY . .
 
 # Keep the container running
-CMD ["tail", "-f", "/dev/null"]
+CMD ["uvicorn", "src.api:app", "--host", "0.0.0.0", "--port", "8000"]

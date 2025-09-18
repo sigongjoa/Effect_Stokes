@@ -27,12 +27,19 @@ class EffectStokesOrchestrator:
         print("2. 시뮬레이션 에이전트 실행...")
         sim_output = self.sim_agent.run_simulation(parsed_params)
         print(f" -> 시뮬레이션 결과물: {sim_output}")
+        sim_cache_path = sim_output['sim_cache_path']
+        blend_file_path = sim_output['blend_file_path']
 
+        print("2. 시뮬레이션 에이전트 실행...")
+        sim_output = self.sim_agent.run_simulation(parsed_params)
+        print(f" -> 시뮬레이션 결과물: {sim_output}")
+        sim_cache_path = sim_output['sim_cache_path']
+        blend_file_path = sim_output['blend_file_path']
 
         print("3. 스타일 에이전트 실행...")
         # 스타일 에이전트는 시뮬레이션 캐시 경로를 사용
         current_params = parsed_params
-        render_path = self.style_agent.apply_style(sim_output['sim_cache'], current_params)
+        render_path = self.style_agent.apply_style(sim_cache_path, current_params, blend_file_path)
         
         # 피드백 루프 (예시: 3회 반복)
         for i in range(3):
@@ -48,7 +55,7 @@ class EffectStokesOrchestrator:
             render_path = self.style_agent.apply_style(sim_output['sim_cache'], current_params) # 스타일 재적용
             
         print("5. 렌더 에이전트 실행 (최종 렌더링)...")
-        final_video_path = self.render_agent.finalize_render(current_params)
+        final_video_path = self.render_agent.finalize_render(current_params, blend_file_path)
 
         print(f"6. 작업 완료! 최종 영상 저장 경로: {final_video_path}")
         return final_video_path
