@@ -1,27 +1,23 @@
 import numpy as np
-import matplotlib.pyplot as plt
 import os
-from PIL import Image
-import shutil
 
-def run_navier_stokes_simulation_to_gif(output_gif_path):
+def run_navier_stokes_simulation_and_save_data(output_dir):
     """
     A simple 2D Navier-Stokes solver for lid-driven cavity flow.
-    Saves the entire simulation process as a GIF animation.
+    Saves the velocity (u, v) and pressure (p) fields as .npz files for each time step.
 
     Args:
-        output_gif_path (str): Path to save the output GIF animation.
+        output_dir (str): Directory to save the output .npz files.
     """
     # Simulation parameters
-    nx = 41
-    ny = 41
-    nt = 500 # Time steps
-    nit = 50 # Pressure correction iterations
+    nx = 41  # Number of grid points in x
+    ny = 41  # Number of grid points in y
+    nt = 500 # Number of time steps
+    nit = 50 # Number of pressure correction iterations
     dx = 2 / (nx - 1)
     dy = 2 / (ny - 1)
     x = np.linspace(0, 2, nx)
     y = np.linspace(0, 2, ny)
-    X, Y = np.meshgrid(x, y)
 
     rho = 1
     nu = .1
@@ -33,15 +29,10 @@ def run_navier_stokes_simulation_to_gif(output_gif_path):
     p = np.zeros((ny, nx))
     b = np.zeros((ny, nx))
 
-    # --- Frame generation setup ---
-    frames_dir = os.path.join(os.path.dirname(output_gif_path), "frames")
-    if os.path.exists(frames_dir):
-        shutil.rmtree(frames_dir)
-    os.makedirs(frames_dir)
-    frame_paths = []
-    save_frame_interval = 10 # Save a frame every 10 time steps
+    # Ensure output directory exists
+    os.makedirs(output_dir, exist_ok=True)
 
-    print("--- Starting Navier-Stokes Simulation for GIF ---")
+    print("--- Starting Navier-Stokes Simulation and Saving Data ---")
 
     # Main simulation loop
     for n in range(nt):
@@ -77,35 +68,14 @@ def run_navier_stokes_simulation_to_gif(output_gif_path):
         u[0, :] = 0; u[:, 0] = 0; u[:, -1] = 0; u[-1, :] = 1
         v[0, :] = 0; v[-1, :] = 0; v[:, 0] = 0; v[:, -1] = 0
 
-        # --- Save frame at interval ---
-        if n % save_frame_interval == 0:
-            fig = plt.figure(figsize=(11, 7), dpi=80)
-            plt.contourf(X, Y, p, alpha=0.5, cmap=plt.cm.viridis)
-            plt.colorbar()
-            plt.streamplot(X, Y, u, v, color='black')
-            plt.title(f"Velocity Field at Timestep {n}")
-            frame_path = os.path.join(frames_dir, f"frame_{n:04d}.png")
-            plt.savefig(frame_path)
-            plt.close(fig)
-            frame_paths.append(frame_path)
-            print(f"Saved frame {n}")
+        # Save data for current time step
+        if n % 10 == 0: # Save every 10 time steps
+            filename = os.path.join(output_dir, f"fluid_data_{n:04d}.npz")
+            np.savez(filename, u=u, v=v, p=p, x=x, y=y)
+            print(f"Saved fluid data for timestep {n} to {filename}")
 
-    print("--- Simulation Finished ---")
-
-    # --- Assemble GIF ---
-    print("--- Assembling GIF from frames ---")
-    images = [Image.open(fp) for fp in frame_paths]
-    images[0].save(output_gif_path, save_all=True, append_images=images[1:], duration=100, loop=0)
-
-    # --- Cleanup ---
-    shutil.rmtree(frames_dir)
-
-    print(f"--- GIF animation saved to {output_gif_path} ---")
+    print("--- Simulation Finished and Data Saved ---")
 
 if __name__ == "__main__":
-    output_dir = "/mnt/d/progress/Effect_Stokes/workspace/outputs"
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
-    
-    output_file = os.path.join(output_dir, "navier_stokes_animation.gif")
-    run_navier_stokes_simulation_to_gif(output_file)
+    output_data_dir = "/mnt/d/progress/Effect_Stokes/workspace/outputs/fluid_data"
+    run_navier_stokes_simulation_and_save_data(output_data_dir)
