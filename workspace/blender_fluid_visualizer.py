@@ -1,22 +1,28 @@
-
 import bpy
 import numpy as np
 import os
 import sys
+import json
 
-def visualize_fluid_data(data_dir, output_blend_path):
+def visualize_fluid_data(data_dir, output_blend_path, viz_params):
     """
     Reads fluid simulation data from .npz files and visualizes it in Blender
-    using animated arrow objects.
+    using animated arrow objects, configurable via viz_params.
 
     Args:
         data_dir (str): Path to the directory containing fluid_data_XXXX.npz files.
         output_blend_path (str): Path to save the resulting .blend file.
+        viz_params (dict): Dictionary of visualization parameters.
     """
     # Clear existing scene
     bpy.ops.wm.read_factory_settings(use_empty=True)
 
     scene = bpy.context.scene
+
+    # --- Visualization Parameters from viz_params ---
+    arrow_color_rgb = viz_params.get("arrow_color", (0.0, 0.0, 1.0)) # Default blue
+    arrow_scale_factor = viz_params.get("arrow_scale_factor", 1.0)
+    arrow_density = viz_params.get("arrow_density", 10)
 
     # --- Load Fluid Data ---
     fluid_data_files = sorted([f for f in os.listdir(data_dir) if f.startswith("fluid_data_") and f.endswith(".npz")])
@@ -51,12 +57,20 @@ def visualize_fluid_data(data_dir, output_blend_path):
     arrow_obj.name = "FlowArrow"
     arrow_obj.hide_set(True) # Hide the original, we'll use instances
 
+    # Create a material for the arrows
+    arrow_mat = bpy.data.materials.new(name="ArrowMaterial")
+    arrow_mat.diffuse_color = (*arrow_color_rgb, 1.0) # Set color from params
+    if arrow_obj.data.materials:
+        arrow_obj.data.materials[0] = arrow_mat
+    else:
+        arrow_obj.data.materials.append(arrow_mat)
+
     # --- Create Grid of Animated Arrows ---
     arrow_instances = []
     # Use a coarser grid for visualization to avoid too many objects
-    # Sample every 4th point for a 10x10 grid from 41x41
-    sample_step_x = max(1, nx // 10)
-    sample_step_y = max(1, ny // 10)
+    # Sample every (nx/arrow_density)th point
+    sample_step_x = max(1, nx // arrow_density)
+    sample_step_y = max(1, ny // arrow_density)
 
     for i in range(0, ny, sample_step_y):
         for j in range(0, nx, sample_step_x):
@@ -89,7 +103,7 @@ def visualize_fluid_data(data_dir, output_blend_path):
 
             # Set rotation (Euler Z) and scale
             obj.rotation_euler.z = angle_rad
-            obj.scale = (0.5 + magnitude * 2, 0.5 + magnitude * 2, 0.5 + magnitude * 2) # Scale based on magnitude
+            obj.scale = (0.5 + magnitude * arrow_scale_factor, 0.5 + magnitude * arrow_scale_factor, 0.5 + magnitude * arrow_scale_factor) # Scale based on magnitude
 
             # Insert keyframes for rotation and scale
             obj.keyframe_insert(data_path="rotation_euler", index=2) # Z-rotation
@@ -106,16 +120,18 @@ if __name__ == "__main__":
     # Get arguments passed to the script
     if "--" in sys.argv:
         args = sys.argv[sys.argv.index("--") + 1:]
-        if len(args) == 2:
+        if len(args) == 3:
             fluid_data_dir = args[0]
             output_blend_file = args[1]
+            viz_params_json = args[2]
+            viz_params = json.loads(viz_params_json)
         else:
             print("Error: Incorrect number of arguments.")
-            print("Usage: blender --background --python blender_fluid_visualizer.py -- <fluid_data_directory> <output_blend_file>")
+            print("Usage: blender --background --python blender_fluid_visualizer.py -- <fluid_data_directory> <output_blend_file> <viz_params_json>")
             sys.exit(1)
     else:
         print("Error: Arguments not provided.")
-        print("Usage: blender --background --python blender_fluid_visualizer.py -- <fluid_data_directory> <output_blend_file>")
+        print("Usage: blender --background --python blender_fluid_visualizer.py -- <fluid_data_directory> <output_blend_file> <viz_params_json>")
         sys.exit(1)
 
-    visualize_fluid_data(fluid_data_dir, output_blend_file)
+    visualize_fluid_data(fluid_data_dir, output_blend_file, viz_params)
