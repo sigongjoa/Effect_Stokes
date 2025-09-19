@@ -1,2 +1,6 @@
 openai
 Pillow
+fastapi
+uvicorn
+opencv-python
+matplotlib

@@ -44,7 +44,14 @@
 
 2.  **Simulation Agent (`simulation_agent.run_simulation`)**
     -   **Input:** `params: dict`
-    -   **Output:** `sim_data_path: str` (e.g., `"assets/simulations/fire_punch_cache"`)
+    -   **Output:** `sim_output: dict`
+        ```python
+        {
+            "sim_cache_path": "assets/simulations/fire_punch_cache",
+            "blend_file_path": "assets/blender_scenes/fire_punch.blend",
+            "sim_preview_path": "assets/previews/fire_punch_preview.mp4"
+        }
+        ```
 
 3.  **Style Agent (`style_agent.apply_style`)**
     -   **Input:** `sim_data_path: str`, `params: dict`

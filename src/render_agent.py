@@ -24,41 +24,45 @@ class RenderAgent:
             raise ValueError("LLM failed to generate Blender final render script.")
 
         # 2. Save the script to a temporary file
-        script_path = os.path.join(self.output_dir, "temp_final_render_script.py")
-        with open(script_path, "w") as f:
+        script_filename = "temp_final_render_script.py"
+        script_path_in_app = os.path.join(self.output_dir, script_filename)
+        with open(script_path_in_app, "w") as f:
             f.write(blender_script_content)
-        print(f"[RenderAgent] Generated Blender script saved to: {script_path}")
+        print(f"[RenderAgent] Generated Blender script saved to: {script_path_in_app}")
 
-        # Define output path for the final video
-        final_video_path = os.path.join(self.output_dir, "final_video.mp4")
+        # Define output path for the final video (path *inside* the blender_runner container)
+        final_video_path_in_blender = os.path.join("/workspace/outputs", "final_video.mp4")
 
-        # 3. Execute Blender in headless mode with the script
+        # 3. Execute Blender in headless mode using docker run
         try:
             command = [
-                "blender",
-                blend_file_path, # Open the blend file
-                "--background",
-                "--python", script_path,
-                "--", # Separator for arguments to the python script
-                final_video_path # Pass final_video_path as an argument to the script
+                "docker", "run", "--rm",
+                "-w", "/tmp", # Set working directory to /tmp
+                "-v", f"{self.output_dir}:/workspace/outputs", # Mount outputs directory
+                "-v", f"{script_path_in_app}:/tmp/{script_filename}", # Mount the script
+                "-v", f"{blend_file_path}:{blend_file_path}", # Mount the blend file
+                "effect_stokes-blender_runner", # The image name of the blender_runner service
+                "blender", blend_file_path, # Open the blend file (path inside blender_runner)
+                "--background", "--python", f"/tmp/{script_filename}", "--",
+                final_video_path_in_blender # Pass final_video_path as an argument to the script
             ]
-            print(f"[RenderAgent] Running Blender command: {' '.join(command)}")
+            print(f"[RenderAgent] Running Docker command: {' '.join(command)}")
             result = subprocess.run(command, capture_output=True, text=True, check=True)
-            print("[RenderAgent] Blender Stdout:", result.stdout)
+            print("[RenderAgent] Docker Stdout:", result.stdout)
             if result.stderr:
-                print("[RenderAgent] Blender Stderr:", result.stderr)
+                print("[RenderAgent] Docker Stderr:", result.stderr)
 
         except FileNotFoundError:
-            print("[RenderAgent] Error: Blender executable not found. Make sure Blender is installed and in your PATH.")
+            print("[RenderAgent] Error: 'docker' command not found. Make sure Docker is installed and in your PATH.")
             raise
         except subprocess.CalledProcessError as e:
-            print(f"[RenderAgent] Error during Blender execution: {e}")
-            print("[RenderAgent] Blender Stdout:", e.stdout)
-            print("[RenderAgent] Blender Stderr:", e.stderr)
+            print(f"[RenderAgent] Error during Docker/Blender execution: {e}")
+            print("[RenderAgent] Docker Stdout:", e.stdout)
+            print("[RenderAgent] Docker Stderr:", e.stderr)
             raise
         except Exception as e:
             print(f"[RenderAgent] An unexpected error occurred: {e}")
             raise
 
-        print(f"[RenderAgent] Final video rendered: {final_video_path}")
-        return final_video_path
+        print(f"[RenderAgent] Final video rendered: {final_video_path_in_blender}")
+        return final_video_path_in_blender
