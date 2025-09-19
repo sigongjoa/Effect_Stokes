@@ -8,12 +8,15 @@ from feedback_agent import FeedbackAgent
 from render_agent import RenderAgent
 
 class EffectStokesOrchestrator:
-    def __init__(self):
+    def __init__(self, llm_type: str = "ollama", llm_model: str = "llama2", llm_base_url: str = "http://localhost:11434"):
         # 각 에이전트 인스턴스 초기화
-        self.llm = LLMInterface()
+        self.llm = LLMInterface(llm_type=llm_type, model_name=llm_model, base_url=llm_base_url)
         self.sim_agent = SimulationAgent()
+        self.style_agent = StyleAgent(llm_type=llm_type, llm_model=llm_model, llm_base_url=llm_base_url)
+        self.render_agent = RenderAgent()
+        # self.feedback_agent = FeedbackAgent() # 피드백 에이전트는 나중에 통합
 
-    def run_pipeline(self, user_prompt: str):
+    def run_pipeline(self, user_prompt: str, fluid_data_dir: str, output_blend_file: str, initial_viz_params: dict = None):
         """
         사용자 프롬프트를 받아 VFX 생성 파이프라인을 실행합니다.
         """
@@ -24,11 +27,18 @@ class EffectStokesOrchestrator:
         print("2. 시뮬레이션 에이전트 실행...")
         sim_output = self.sim_agent.run_simulation(parsed_params)
         print(f" -> 시뮬레이션 결과물: {sim_output}")
-        sim_cache_path = sim_output['sim_cache_path']
-        blend_file_path = sim_output['blend_file_path']
+        fluid_data_path = sim_output['output_data_path']
 
-        print("3. 시뮬레이션 완료.")
-        return sim_output
+        print("3. 스타일 에이전트 실행 (시각화 파라미터 생성/정제)...")
+        final_viz_params = self.style_agent.generate_viz_params(parsed_params, initial_viz_params)
+        print(f" -> 최종 시각화 파라미터: {final_viz_params}")
+
+        print("4. 렌더 에이전트 실행 (Blender 시각화)...")
+        render_output = self.render_agent.render_vfx(fluid_data_path, output_blend_file, final_viz_params)
+        print(f" -> 렌더링 결과물: {render_output}")
+        
+        print("5. 파이프라인 완료.")
+        return render_output
 
     def parse_prompt(self, prompt: str):
         print("   LLM을 호출하여 프롬프트에서 파라미터를 추출합니다...")
@@ -39,12 +49,7 @@ class EffectStokesOrchestrator:
                 {"user_prompt": prompt}
             )
             
-            # LLM의 응답에서 JSON 부분만 정리
-            # (LLM이 설명 등을 포함할 경우를 대비)
-            params_json_str = params_json_str[params_json_str.find('{'):params_json_str.rfind('}')+1]
-            
-            # JSON 문자열을 파이썬 딕셔너리로 변환
-            params = json.loads(params_json_str)
+            params = params_json_str # LLMInterface now returns a dict directly
             return params
         except Exception as e:
             print(f"LLM 파라미터 추출 실패: {e}")
@@ -58,5 +63,32 @@ class EffectStokesOrchestrator:
             }
 
 if __name__ == "__main__":
-    orchestrator = EffectStokesOrchestrator()
-    orchestrator.run_pipeline("A slow-motion video of a powerful fire punch, in a demon-slayer anime style. The effect should last for 5 seconds, featuring vibrant red and black flames.")
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Effect Stokes VFX Generation Pipeline")
+    parser.add_argument("--prompt", type=str, required=True, help="User prompt for VFX generation.")
+    parser.add_argument("--fluid_data_dir", type=str, help="Directory to store fluid simulation data.")
+    parser.add_argument("--output_blend_file", type=str, help="Path for the output Blender file.")
+    parser.add_argument("--viz_params", type=str, help="JSON string of visualization parameters.")
+    parser.add_argument("--llm_type", type=str, default="ollama", help="Type of LLM to use (openai or ollama).")
+    parser.add_argument("--llm_model", type=str, default="llama2", help="Name of the LLM model to use.")
+    parser.add_argument("--llm_base_url", type=str, default="http://localhost:11434", help="Base URL for the LLM API.")
+
+    args = parser.parse_args()
+
+    # Initialize orchestrator with LLM configuration
+    orchestrator = EffectStokesOrchestrator(
+        llm_type=args.llm_type,
+        llm_model=args.llm_model,
+        llm_base_url=args.llm_base_url
+    )
+
+    # Parse viz_params if provided
+    initial_viz_params = json.loads(args.viz_params) if args.viz_params else {}
+
+    orchestrator.run_pipeline(
+        user_prompt=args.prompt,
+        fluid_data_dir=args.fluid_data_dir,
+        output_blend_file=args.output_blend_file,
+        initial_viz_params=initial_viz_params
+    )

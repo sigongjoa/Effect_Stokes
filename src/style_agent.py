@@ -4,8 +4,8 @@ from llm_interface import LLMInterface
 from prompt_templates import PROMPT_TEMPLATES
 
 class StyleAgent:
-    def __init__(self):
-        self.llm = LLMInterface()
+    def __init__(self, llm_type: str = "ollama", llm_model: str = "llama2", llm_base_url: str = "http://localhost:11434"):
+        self.llm = LLMInterface(llm_type=llm_type, model_name=llm_model, base_url=llm_base_url)
         # Determine output directory based on execution environment
         # If running inside Docker, it will be /app/workspace/outputs
         # If running on host for testing, it will be ./workspace/outputs
@@ -15,61 +15,37 @@ class StyleAgent:
             self.output_dir = os.path.join(os.getcwd(), "workspace", "outputs")
         os.makedirs(self.output_dir, exist_ok=True)
 
-    def apply_style(self, sim_cache_path: str, params: dict, blend_file_path: str):
-        print(f"[StyleAgent] Applying style to {blend_file_path} with params: {params}")
+    def generate_viz_params(self, parsed_vfx_params: dict, initial_viz_params: dict = None) -> dict:
+        print(f"[StyleAgent] Generating visualization parameters for: {parsed_vfx_params}")
 
-        # 1. Generate Blender script using LLM
-        blender_script_content = self.llm.generate_code(
-            "blender_style_script",
-            {
-                "style": params.get("style", "realistic"),
-                "colors": params.get("colors", ["white"])
-            }
-        )
-
-        if not blender_script_content:
-            raise ValueError("LLM failed to generate Blender style script.")
-
-        # 2. Save the script to a temporary file in the output directory
-        script_filename = "temp_style_script.py"
-        script_path_in_app = os.path.join(self.output_dir, script_filename)
-        with open(script_path_in_app, "w") as f:
-            f.write(blender_script_content)
-        print(f"[StyleAgent] Generated Blender script saved to: {script_path_in_app}")
-
-        # Define output path for the rendered image (path *inside* the blender_runner container)
-        rendered_image_path_in_blender = os.path.join("/workspace/outputs", "styled_frame.png")
-
-        # 3. Execute Blender in headless mode using docker run
+        # LLM을 호출하여 시각화 파라미터 생성
         try:
-            command = [
-                "docker", "run", "--rm",
-                "-w", "/tmp", # Set working directory to /tmp
-                "-v", f"{self.output_dir}:/workspace/outputs", # Mount outputs directory
-                "-v", f"{script_path_in_app}:/tmp/{script_filename}", # Mount the script
-                
-                "effect_stokes-blender_runner", # The image name of the blender_runner service
-                "blender", blend_file_path, # Open the blend file (path inside blender_runner)
-                "--background", "--python", f"/tmp/{script_filename}", "--",
-                rendered_image_path_in_blender # Pass rendered_image_path as an argument to the script
-            ]
-            print(f"[StyleAgent] Running Docker command: {' '.join(command)}")
-            result = subprocess.run(command, capture_output=True, text=True, check=True)
-            print("[StyleAgent] Docker Stdout:", result.stdout)
-            if result.stderr:
-                print("[StyleAgent] Docker Stderr:", result.stderr)
+            llm_generated_viz_params = self.llm.generate_code(
+                "generate_blender_script_params",
+                parsed_vfx_params
+            )
+            
+            # 초기 파라미터가 있으면 병합 (초기 파라미터가 우선)
+            final_viz_params = llm_generated_viz_params
+            if initial_viz_params:
+                # Deep merge for nested dictionaries
+                def deep_merge(source, destination):
+                    for key, value in source.items():
+                        if isinstance(value, dict) and key in destination and isinstance(destination[key], dict):
+                            destination[key] = deep_merge(value, destination[key])
+                        else:
+                            destination[key] = value
+                    return destination
+                final_viz_params = deep_merge(initial_viz_params, llm_generated_viz_params)
 
-        except FileNotFoundError:
-            print("[StyleAgent] Error: 'docker' command not found. Make sure Docker is installed and in your PATH.")
-            raise
-        except subprocess.CalledProcessError as e:
-            print(f"[StyleAgent] Error during Docker/Blender execution: {e}")
-            print("[StyleAgent] Docker Stdout:", e.stdout)
-            print("[StyleAgent] Docker Stderr:", e.stderr)
-            raise
+            return final_viz_params
         except Exception as e:
-            print(f"[StyleAgent] An unexpected error occurred: {e}")
-            raise
-
-        print(f"[StyleAgent] Style applied and frame rendered: {rendered_image_path_in_blender}")
-        return rendered_image_path_in_blender
+            print(f"[StyleAgent] LLM을 통한 시각화 파라미터 생성 실패: {e}")
+            print("[StyleAgent] 기본 시각화 파라미터를 사용합니다.")
+            # LLM 실패 시 기본값
+            return {
+                "mesh_params": {"mesh_type": "ribbon", "density_factor": 0.5},
+                "material_params": {"base_color": [0.0, 0.0, 0.2], "emission_color": [0.2, 0.2, 0.8], "emission_strength": 5.0, "transparency_alpha": 0.7},
+                "freestyle_params": {"enable_freestyle": True, "line_thickness": 2.0, "line_color": [0.0, 0.0, 0.0]},
+                "animation_params": {"dissipation_start_frame": 800, "dissipation_end_frame": 1000}
+            }
