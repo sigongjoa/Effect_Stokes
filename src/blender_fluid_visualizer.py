@@ -17,18 +17,25 @@ def enable_gpu_rendering():
         cycles_prefs = bpy.context.preferences.addons['cycles'].preferences
         
         print("[INFO] Available compute devices:")
+        print(f"[DEBUG] Raw devices from get_devices(): {cycles_prefs.get_devices()}") # Added for debugging
         for device in cycles_prefs.devices:
-            print(f"[INFO] - Device: {device.name}, Type: {device.type}")
+            print(f"[INFO] - Device: {device.name}, Type: {device.type}, Use: {device.use}") # Enhanced logging
 
         # Set compute device type (CUDA is generally well-supported)
-        cycles_prefs.compute_device_type = 'CUDA'
+        # Check for OPTIX first, then CUDA
+        if any(d.type == 'OPTIX' for d in cycles_prefs.devices):
+            cycles_prefs.compute_device_type = 'OPTIX'
+        elif any(d.type == 'CUDA' for d in cycles_prefs.devices):
+            cycles_prefs.compute_device_type = 'CUDA'
+        else:
+            cycles_prefs.compute_device_type = 'NONE' # Fallback if neither found
         print(f"[INFO] Set compute device type to {cycles_prefs.compute_device_type}.")
 
-        # Enable GPU devices
-        gpu_devices = [d for d in cycles_prefs.devices if d.type == 'CUDA'] # Or 'OPTIX'
+        # Enable GPU devices based on the chosen compute_device_type
+        gpu_devices = [d for d in cycles_prefs.devices if d.type == cycles_prefs.compute_device_type]
 
         if not gpu_devices:
-            print("[WARNING] No compatible CUDA GPU found inside the container.")
+            print("[WARNING] No compatible CUDA/OPTIX GPU found inside the container.")
             print("[WARNING] Falling back to CPU rendering.")
             bpy.context.scene.cycles.device = 'CPU'
         else:
@@ -38,12 +45,14 @@ def enable_gpu_rendering():
                 device.use = False
             
             # Enable all found GPUs
+            enabled_device_names = [] # New list to store names
             for device in gpu_devices:
                 device.use = True
+                enabled_device_names.append(device.name) # Store name
                 print(f"[INFO] Enabled GPU device: {device.name}")
             
             bpy.context.scene.cycles.device = 'GPU'
-            print("[SUCCESS] GPU rendering is configured.")
+            print(f"[SUCCESS] GPU rendering is configured. Enabled devices: {', '.join(enabled_device_names)}") # Enhanced log
 
     except Exception as e:
         print(f"[ERROR] An error occurred while configuring GPU: {e}")
@@ -76,7 +85,7 @@ def create_basic_material(name, base_color_rgb, emission_strength=0.0):
 
     # Configure Principled BSDF
     principled_node.inputs['Base Color'].default_value = (*base_color_rgb, 1.0)
-    principled_node.inputs['Emission'].default_value = (*base_color_rgb, 1.0)
+    principled_node.inputs['Emission Color'].default_value = (*base_color_rgb, 1.0)
     principled_node.inputs['Emission Strength'].default_value = emission_strength
     principled_node.inputs['Roughness'].default_value = 0.5
 
@@ -173,7 +182,7 @@ def create_getsuga_material(material_params):
     transparency_alpha = material_params.get("transparency_alpha", 0.7)
 
     principled_node.inputs['Base Color'].default_value = (*base_color, 1.0)
-    principled_node.inputs['Emission'].default_value = (*emission_color, 1.0)
+    principled_node.inputs['Emission Color'].default_value = (*emission_color, 1.0)
     principled_node.inputs['Emission Strength'].default_value = emission_strength
     principled_node.inputs['Alpha'].default_value = transparency_alpha # For transparency
 
@@ -202,48 +211,81 @@ def configure_freestyle(freestyle_params):
         line_color = freestyle_params.get("line_color", (0.0, 0.0, 0.0))
         lineset.linestyle.color = line_color
 
-def animate_getsuga_vfx(all_fluid_data, mesh_objects, material_params, animation_params):
+def animate_getsuga_vfx(all_fluid_data, mesh_objects, viz_params, scene):
     print("Animating Getsuga Tenshou VFX...")
-    scene = bpy.context.scene
     
-    dissipation_start_frame = animation_params.get("dissipation_start_frame", scene.frame_end - 200)
-    dissipation_end_frame = animation_params.get("dissipation_end_frame", scene.frame_end)
-
-    # Get the shared Getsuga material
+    anim_params = viz_params.get("animation_params", {})
+    material_params = viz_params.get("material_params", {})
+    
+    dissipation_start = anim_params.get("dissipation_start_frame", scene.frame_end - 30)
+    dissipation_end = anim_params.get("dissipation_end_frame", scene.frame_end)
+    forward_motion = np.array(anim_params.get("forward_motion", [0, 0.2, 0]))
+    
     getsuga_material = bpy.data.materials.get("GetsugaMaterial")
     if not getsuga_material or not getsuga_material.use_nodes:
         print("Error: GetsugaMaterial not found or does not use nodes. Cannot animate material.")
         return
-
     principled_node = getsuga_material.node_tree.nodes.get('Principled BSDF')
     if not principled_node:
         print("Error: Principled BSDF node not found in GetsugaMaterial. Cannot animate material.")
         return
 
-    for frame_idx, frame_data in enumerate(all_fluid_data):
-        scene.frame_set(frame_idx)
-        
-        # Make the current frame's mesh visible
-        if frame_idx < len(mesh_objects): # Ensure index is within bounds
-            obj = mesh_objects[frame_idx]
-            obj.hide_set(False)
-            obj.hide_render = False
-            obj.keyframe_insert(data_path="hide_viewport", frame=frame_idx)
-            obj.keyframe_insert(data_path="hide_render", frame=frame_idx)
-
-        # Animate material properties for dissipation
-        if dissipation_start_frame <= frame_idx <= dissipation_end_frame:
-            factor = (frame_idx - dissipation_start_frame) / (dissipation_end_frame - dissipation_start_frame)
+    # --- Animate Material Properties over the entire timeline ---
+    for frame in range(scene.frame_start, scene.frame_end + 1):
+        # Dissipation (투명도/밝기 점점 감소)
+        if dissipation_start <= frame <= dissipation_end:
+            # Calculate dissipation factor (0.0 at start, 1.0 at end)
+            factor = (frame - dissipation_start) / (dissipation_end - dissipation_start)
             
             # Fade out emission strength
             current_emission_strength = material_params.get("emission_strength", 5.0) * (1 - factor)
             principled_node.inputs['Emission Strength'].default_value = current_emission_strength
-            principled_node.inputs['Emission Strength'].keyframe_insert(data_path="default_value", frame=frame_idx)
             
-            # Fade out transparency (become more transparent)
+            # Fade out alpha (become more transparent)
             current_alpha = material_params.get("transparency_alpha", 0.7) * (1 - factor)
             principled_node.inputs['Alpha'].default_value = current_alpha
-            principled_node.inputs['Alpha'].keyframe_insert(data_path="default_value", frame=frame_idx)
+        elif frame < dissipation_start:
+            # Before dissipation, use full values
+            principled_node.inputs['Emission Strength'].default_value = material_params.get("emission_strength", 5.0)
+            principled_node.inputs['Alpha'].default_value = material_params.get("transparency_alpha", 0.7)
+        else: # frame > dissipation_end
+            # After dissipation, fully transparent/dark
+            principled_node.inputs['Emission Strength'].default_value = 0.0
+            principled_node.inputs['Alpha'].default_value = 0.0
+        
+        # Insert keyframes for the material properties at the current frame
+        principled_node.inputs['Emission Strength'].keyframe_insert(data_path="default_value", frame=frame)
+        principled_node.inputs['Alpha'].keyframe_insert(data_path="default_value", frame=frame)
+
+    # --- Animate Object Visibility and Position ---
+    for frame_idx, obj in enumerate(mesh_objects):
+        if frame_idx > scene.frame_end:
+            continue
+
+        # The object's base position is determined by the forward motion
+        obj.location = forward_motion * frame_idx
+        obj.keyframe_insert(data_path="location", frame=frame_idx)
+
+        # The object should only be visible on its corresponding frame
+        # Hide it on the frame before it appears
+        if frame_idx > scene.frame_start:
+            obj.hide_set(True)
+            obj.hide_render = True
+            obj.keyframe_insert(data_path="hide_viewport", frame=frame_idx - 1)
+            obj.keyframe_insert(data_path="hide_render", frame=frame_idx - 1)
+
+        # Show it on its correct frame
+        obj.hide_set(False)
+        obj.hide_render = False
+        obj.keyframe_insert(data_path="hide_viewport", frame=frame_idx)
+        obj.keyframe_insert(data_path="hide_render", frame=frame_idx)
+
+        # Hide it on the frame after it appears
+        if frame_idx < scene.frame_end:
+            obj.hide_set(True)
+            obj.hide_render = True
+            obj.keyframe_insert(data_path="hide_viewport", frame=frame_idx + 1)
+            obj.keyframe_insert(data_path="hide_render", frame=frame_idx + 1)
 
     print("Getsuga Tenshou VFX animation complete.")
 
@@ -325,100 +367,86 @@ def visualize_fluid_data(data_dir, output_blend_path, viz_params):
     print("[INFO] Generating meshes for each frame...")
     mesh_objects = []
     for frame_idx, frame_data in enumerate(all_fluid_data):
+        if frame_idx > scene.frame_end:
+            break # Don't create more objects than frames in the scene
         print(f"[DEBUG] Processing frame {frame_idx}...")
-        scene.frame_set(frame_idx)
-        # Ensure clean selection before creating objects
-        bpy.ops.object.select_all(action='DESELECT')
-        bpy.context.view_layer.objects.active = None
 
         mesh_data = create_getsuga_mesh(frame_data, mesh_params)
         mesh_obj = bpy.data.objects.new(f"GetsugaVFX_Frame_{frame_idx:04d}", mesh_data)
         scene.collection.objects.link(mesh_obj)
-        
+
         if getsuga_material:
             if mesh_obj.data.materials:
                 mesh_obj.data.materials[0] = getsuga_material
             else:
                 mesh_obj.data.materials.append(getsuga_material)
-        
+
         # Hide all meshes by default, animation will control visibility
         mesh_obj.hide_set(True)
         mesh_obj.hide_render = True
-        mesh_obj.keyframe_insert(data_path="hide_viewport", frame=frame_idx)
-        mesh_obj.keyframe_insert(data_path="hide_render", frame=frame_idx)
 
         mesh_objects.append(mesh_obj)
     print(f"[INFO] Generated {len(mesh_objects)} mesh objects.")
     
     # 4. Animate meshes and material properties
-    animate_getsuga_vfx(all_fluid_data, mesh_objects, material_params, animation_params)
+    animate_getsuga_vfx(all_fluid_data, mesh_objects, viz_params, scene)
 
     # --- Setup Camera and Light (Basic) ---
     print("[INFO] Setting up camera and lights...")
-    # Remove default cube
+    # Remove default cube if it exists
     if "Cube" in bpy.data.objects:
-        bpy.data.objects["Cube"].select_set(True)
-        bpy.ops.object.delete()
+        bpy.data.objects.remove(bpy.data.objects["Cube"], do_unlink=True)
 
     # Add a camera
-    bpy.ops.object.camera_add(location=(1.0, 1.0, 5.0))
+    bpy.ops.object.camera_add(location=(10, -15, 5)) # Adjusted for better view
     camera = bpy.context.object
     scene.camera = camera
-    camera.rotation_euler = (0, 0, 0) # Look straight down
+    # Point camera towards the origin (where the effect starts)
+    # This uses a Track To constraint for simplicity
+    track_to_empty = bpy.data.objects.new("TrackTarget", None)
+    scene.collection.objects.link(track_to_empty)
+    track_to_empty.location = (0, 5, 0) # Look slightly ahead of the start
+    constraint = camera.constraints.new(type='TRACK_TO')
+    constraint.target = track_to_empty
 
     # Add a light
-    bpy.ops.object.light_add(type='SUN', location=(1.0, 1.0, 10.0))
+    bpy.ops.object.light_add(type='SUN', location=(5, 5, 10))
     light = bpy.context.object
-    light.data.energy = 2.0
+    light.data.energy = 3.0
+    light.data.angle = 0.5 # Softer shadows
 
     # Add a floor plane
-    bpy.ops.mesh.primitive_plane_add(size=5, enter_editmode=False, align='WORLD', location=(1.0, 1.0, -0.1))
+    bpy.ops.mesh.primitive_plane_add(size=50, enter_editmode=False, align='WORLD', location=(0, 0, -0.1))
     floor_obj = bpy.context.object
     floor_obj.name = "Floor"
-    floor_mat = create_basic_material("FloorMaterial", (0.2, 0.2, 0.2), 0.0)
+    floor_mat = create_basic_material("FloorMaterial", (0.1, 0.1, 0.1), 0.0)
     if floor_obj.data.materials:
         floor_obj.data.materials[0] = floor_mat
     else:
         floor_obj.data.materials.append(floor_mat)
 
-    # --- Camera Animation (Simple Orbit) ---
+    # --- Camera Animation (Simple Pan) ---
     print("[INFO] Setting up camera animation...")
-    camera_orbit_radius = 6.0
-    camera_orbit_height = 3.0
-    camera_target = (1.0, 1.0, 0.0) # Center of the fluid domain
-
-    # Helper function to convert direction vector to quaternion (look_at equivalent)
-    def direction_to_quaternion(direction_vector, up_axis='Y'):
-        from mathutils import Vector
-        # Ensure direction is normalized
-        direction_vector = Vector(direction_vector).normalized()
-        # Use to_track_quat to get the rotation to point along the direction vector
-        # 'Z' is the forward axis for the camera, 'Y' is the up axis
-        return direction_vector.to_track_quat('Z', up_axis)
-
-    for frame in range(scene.frame_start, scene.frame_end + 1):
-        scene.frame_set(frame)
-        angle = (frame / (scene.frame_end - scene.frame_start + 1)) * 2 * np.pi
-        cam_x = camera_target[0] + camera_orbit_radius * np.cos(angle)
-        cam_y = camera_target[1] + camera_orbit_radius * np.sin(angle)
-        cam_z = camera_orbit_height
-
-        camera.location = (cam_x, cam_y, cam_z)
-        # Point camera to target
-        direction = np.array(camera_target) - np.array(camera.location)
-        rot_quat = direction_to_quaternion(direction)
-        camera.rotation_mode = 'QUATERNION'
-        camera.rotation_quaternion = rot_quat
-
-        camera.keyframe_insert(data_path="location")
-        camera.keyframe_insert(data_path="rotation_quaternion")
+    # The Track To constraint handles rotation, so we only animate the target's location
+    track_to_empty.location = (0, 5, 0)
+    track_to_empty.keyframe_insert(data_path="location", frame=scene.frame_start)
+    
+    track_to_empty.location = (0, 15, 0) # Follow the effect
+    track_to_empty.keyframe_insert(data_path="location", frame=scene.frame_end)
 
     print("Camera animation complete.")
 
     # --- Save Blend File ---
     print(f"[INFO] Saving final .blend file to {output_blend_path}...")
-    bpy.ops.wm.save_as_mainfile(filepath=output_blend_path)
-    print(f"Blender file saved to {output_blend_path}")
+    # Ensure render engine and device are set to CYCLES/GPU right before saving
+    bpy.context.scene.render.engine = 'CYCLES'
+    bpy.context.scene.cycles.device = 'GPU'
+    try:
+        bpy.ops.wm.save_as_mainfile(filepath=output_blend_path)
+        print(f"Blender file saved to {output_blend_path}")
+    except Exception as e:
+        print(f"[ERROR] Failed to save .blend file: {e}")
+        sys.exit(1)
     print("--- Blender Visualization Finished ---")
 
 

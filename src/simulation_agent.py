@@ -11,7 +11,7 @@ class SimulationAgent:
         if os.getenv("DOCKER_CONTAINER", "false") == "true":
             self.output_dir = "/app/workspace/outputs"
         else:
-            self.output_dir = os.path.join(os.getcwd(), "workspace", "outputs")
+            self.output_dir = os.path.join(os.getcwd(), "outputs")
         os.makedirs(self.output_dir, exist_ok=True)
 
     def run_simulation(self, effect_description: dict, simulation_params: dict = None, visualization_params: dict = None):
@@ -23,14 +23,14 @@ class SimulationAgent:
         inferred_sim_params = {
             "grid_resolution": (81, 81),
             "time_steps": 1000,
-            "viscosity": 0.05,
-            "initial_shape_type": "crescent",
-            "initial_shape_position": (0.5, 1.0),
+            "viscosity": 0.01,
+            "initial_shape_type": "slash",  # 기존 crescent → slash/arc 느낌
+            "initial_shape_position": (0.5, 0.5),
             "initial_shape_size": 0.3,
-            "initial_velocity": (0.5, 0.1),
+            "initial_velocity": (0.0, 3.0),  # +Y 방향으로 강한 전진 속도
             "boundary_conditions": "no_slip_walls",
-            "vortex_strength": 0.0, # Default to no vortex
-            "source_strength": 0.0, # Default to no source
+            "vortex_strength": 0.0,
+            "source_strength": 2.0  # 지속적으로 유체 방출
         }
         inferred_viz_params = {
             "visualization_type": "arrows",
@@ -77,10 +77,11 @@ class SimulationAgent:
 
         # --- 2. Run Python Navier-Stokes simulation to generate .npz data ---
         print("[SimulationAgent] Running Python Navier-Stokes simulation...")
-        python_sim_script_path = os.path.join(os.getcwd(), "workspace", "navier_stokes_test.py")
+        python_sim_script_path = os.path.join(os.getcwd(), "tests", "navier_stokes_test.py")
         python_command = [
             os.path.join(os.getcwd(), "venv", "bin", "python"), # Path to venv python
             python_sim_script_path,
+            fluid_data_dir, # Pass the correct output directory
             json.dumps(inferred_sim_params) # Pass parameters as JSON string
         ]
         try:

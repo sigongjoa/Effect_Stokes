@@ -1,6 +1,7 @@
 import json
 import os
 import subprocess
+import sys
 import shutil
 from llm_interface import LLMInterface
 from prompt_templates import PROMPT_TEMPLATES
@@ -44,17 +45,18 @@ class RenderAgent:
 
         print(f"[RenderAgent] Running Docker render command: {' '.join(docker_command)}")
         try:
-            result = subprocess.run(docker_command, capture_output=True, text=True, check=True)
-            print("[RenderAgent] Docker Stdout:", result.stdout)
-            if result.stderr:
-                print("[RenderAgent] Docker Stderr:", result.stderr)
+            # Stream output directly to console
+            # Note: For real-time streaming, it's often better to use subprocess.Popen
+            # and read line by line, but for simplicity and to avoid buffering issues
+            # with subprocess.run, we'll let stdout/stderr inherit parent's streams.
+            # We remove text=True because we're not capturing output as a string.
+            process = subprocess.run(docker_command, check=True, stdout=sys.stdout, stderr=sys.stderr)
         except FileNotFoundError:
             print("[RenderAgent] Error: 'docker' command not found. Make sure Docker is installed and in your PATH.")
             raise
         except subprocess.CalledProcessError as e:
             print(f"[RenderAgent] Error during Blender frame rendering: {e}")
-            print("[RenderAgent] Docker Stdout:", e.stdout)
-            print("[RenderAgent] Docker Stderr:", e.stderr)
+            # No need to print stdout/stderr here as it was streamed
             raise
         except Exception as e:
             print(f"[RenderAgent] An unexpected error occurred during Blender frame rendering: {e}")

@@ -151,12 +151,12 @@ def run_navier_stokes_simulation_and_save_data(output_dir, sim_params):
     print("--- Simulation Finished and Data Saved ---")
 
 if __name__ == "__main__":
-    output_data_dir = "/mnt/d/progress/Effect_Stokes/workspace/outputs/fluid_data"
-    # Parse parameters from command line
-    if len(sys.argv) > 1:
-        sim_params_json = sys.argv[1]
-        sim_params = json.loads(sim_params_json)
-    else:
-        sim_params = {} # Use defaults if no params provided
+    if len(sys.argv) != 3:
+        print("Usage: python navier_stokes_test.py <output_directory> <sim_params_json>")
+        sys.exit(1)
+
+    output_data_dir = sys.argv[1]
+    sim_params_json = sys.argv[2]
+    sim_params = json.loads(sim_params_json)
 
     run_navier_stokes_simulation_and_save_data(output_data_dir, sim_params)
