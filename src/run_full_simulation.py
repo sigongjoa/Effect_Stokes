@@ -30,6 +30,38 @@ if __name__ == "__main__":
     }
 
     # Parse parameters from command line if provided
+    infer_only = False
+    if "--infer_only" in sys.argv:
+        infer_only = True
+        sys.argv.remove("--infer_only") # Remove it so argparse doesn't complain
+
+    if infer_only:
+        if len(sys.argv) > 1:
+            try:
+                effect_description_json = sys.argv[1]
+                effect_description = json.loads(effect_description_json)
+            except json.JSONDecodeError:
+                print("Error: Invalid JSON for effect_description provided with --infer_only.", file=sys.stderr)
+                sys.exit(1)
+        else:
+            print("Error: effect_description JSON not provided with --infer_only.", file=sys.stderr)
+            sys.exit(1)
+
+        inferred_sim_params, inferred_viz_params = agent.infer_parameters(effect_description)
+        result = {
+            "status": "success",
+            "message": "Parameters inferred successfully.",
+            "inferred_simulation_params": inferred_sim_params,
+            "inferred_visualization_params": inferred_viz_params
+        }
+        # Ensure only the JSON output is printed to stdout
+        print(json.dumps(result, indent=2))
+        sys.exit(0)
+
+    # If not infer_only, proceed with full simulation
+    simulation_params_to_use = default_simulation_params
+    visualization_params_to_use = default_visualization_params
+
     if len(sys.argv) > 1:
         try:
             # sys.argv[1] should be the JSON string for simulation_params
@@ -37,23 +69,24 @@ if __name__ == "__main__":
             # Merge provided params with defaults, provided takes precedence
             simulation_params_to_use = {**default_simulation_params, **provided_simulation_params}
         except json.JSONDecodeError:
-            print("Error: Invalid JSON for simulation parameters provided.")
+            print("Error: Invalid JSON for simulation parameters provided.", file=sys.stderr)
             sys.exit(1)
-    else:
-        simulation_params_to_use = default_simulation_params
 
-    # Visualization params are not passed to run_full_simulation directly,
-    # but inferred by SimulationAgent. We keep default_visualization_params
-    # here for consistency with the original structure, though it's not used
-    # as a direct override in agent.run_simulation() from this script.
-    # The agent's internal inference logic will handle visualization_params.
+    if len(sys.argv) > 2:
+        try:
+            # sys.argv[2] should be the JSON string for visualization_params
+            provided_visualization_params = json.loads(sys.argv[2])
+            # Merge provided params with defaults, provided takes precedence
+            visualization_params_to_use = {**default_visualization_params, **provided_visualization_params}
+        except json.JSONDecodeError:
+            print("Error: Invalid JSON for visualization parameters provided.", file=sys.stderr)
+            sys.exit(1)
 
     result = agent.run_simulation(
-        effect_description=effect_description,
         simulation_params=simulation_params_to_use,
-        # visualization_params are inferred by the agent, not directly passed from here
-        # unless we want to override agent's inference. For now, let agent infer.
+        visualization_params=visualization_params_to_use
     )
+    # Ensure only the JSON output is printed for the full simulation run as well
     print(json.dumps(result, indent=2))
 
     # The "Next Steps for Blender Visualization" part is now handled by run_full_pipeline.py

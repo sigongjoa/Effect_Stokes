@@ -70,23 +70,27 @@ def main(simulation_params_json=None, visualization_params_json=None):
     sim_command = [sys.executable, RUN_SIMULATION_SCRIPT]
     if simulation_params_json:
         sim_command.append(simulation_params_json)
+    if visualization_params_json:
+        sim_command.append(visualization_params_json)
     simulation_output = run_command(sim_command, cwd=PROJECT_ROOT)
 
     # Parse simulation output to get necessary parameters for Blender visualization
     try:
         result_data = json.loads(simulation_output)
         fluid_data_path = result_data.get("output_data_path")
-        # Use the visualization_params_json passed to this main function
-        # If not provided, use inferred from simulation_agent
+        # If not provided, use the ones from the simulation_agent's output
         if visualization_params_json:
-            inferred_visualization_params_str = visualization_params_json
+            visualization_params_to_use_str = visualization_params_json
         else:
-            inferred_visualization_params_str = json.dumps(result_data.get("inferred_visualization_params", {}))
+            visualization_params_to_use_str = json.dumps(result_data.get("visualization_params", {}))
+        
+        # Always use the simulation parameters from the simulation result
+        simulation_params_from_result_str = json.dumps(result_data.get("simulation_params", {}))
     except json.JSONDecodeError as e:
         print(f"Error parsing simulation result JSON: {e}")
         sys.exit(1)
     
-    if not fluid_data_path or not inferred_visualization_params_str:
+    if not fluid_data_path or not visualization_params_to_use_str:
         print("Error: Could not parse fluid data path or visualization parameters from simulation output.")
         sys.exit(1)
 
@@ -105,8 +109,8 @@ def main(simulation_params_json=None, visualization_params_json=None):
         fluid_data_path,
         render_output_path,
         # Pass both simulation and visualization params to oneshot script
-        simulation_params_json, # oneshot script needs sim params for time_steps etc.
-        inferred_visualization_params_str # Use the (inferred or provided) viz params
+        simulation_params_from_result_str, # oneshot script needs sim params for time_steps etc.
+        visualization_params_to_use_str # Use the (inferred or provided) viz params
     ]
     run_command(blender_oneshot_cmd, cwd=PROJECT_ROOT)
 
