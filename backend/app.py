@@ -10,6 +10,10 @@ import json
 import threading
 import logging
 import re
+from src.param_evaluator import ParamEvaluator
+
+# Initialize ParamEvaluator
+param_evaluator = ParamEvaluator()
 
 # Configure logging
 log_file = os.path.join(os.path.dirname(__file__), 'server.log')
@@ -33,10 +37,22 @@ def _validate_type(value, expected_type, param_name):
     if expected_type == float and isinstance(value, int):
         return True, None # Allow int to be treated as float
     if not isinstance(value, expected_type):
+        # If expected type is float/int, but value is string, try to evaluate it as a function
+        if (expected_type == float or expected_type == int) and isinstance(value, str):
+            try:
+                # Temporarily evaluate at t=0 to check if it's a valid expression
+                param_evaluator.evaluate(value, t=0)
+                return True, None
+            except ValueError:
+                return False, f"Parameter '{param_name}' is a string but not a valid mathematical expression."
         return False, f"Parameter '{param_name}' must be of type {expected_type.__name__}"
     return True, None
 
 def _validate_range(value, min_val, max_val, param_name):
+    # If value is a string (function), we can't validate its range directly here.
+    # The range validation will happen during evaluation at each timestep.
+    if isinstance(value, str):
+        return True, None
     if not (min_val <= value <= max_val):
         return False, f"Parameter '{param_name}' must be between {min_val} and {max_val}"
     return True, None
@@ -82,13 +98,17 @@ def validate_params(params):
             is_valid, msg = _validate_list_length(value, rules["len"], param)
             if not is_valid: return False, msg
             for item in value:
+                # For list items, if they are strings, they are not expected to be functions
                 is_valid, msg = _validate_type(item, rules["item_type"], f"{param} item")
                 if not is_valid: return False, msg
                 is_valid, msg = _validate_range(item, rules["min_item"], rules["max_item"], f"{param} item")
                 if not is_valid: return False, msg
         elif rules["type"] in [int, float]:
-            is_valid, msg = _validate_range(value, rules["min"], rules["max"], param)
-            if not is_valid: return False, msg
+            # If it's a string, _validate_type already checked if it's a valid expression
+            # Range check for string expressions is skipped here, done at evaluation time.
+            if not isinstance(value, str):
+                is_valid, msg = _validate_range(value, rules["min"], rules["max"], param)
+                if not is_valid: return False, msg
         elif rules["type"] == str:
             if "allowed" in rules and value not in rules["allowed"]:
                 return False, f"Parameter '{param}' must be one of {rules['allowed']}"
@@ -120,8 +140,9 @@ def validate_params(params):
                 is_valid, msg = _validate_range(item, rules["min_item"], rules["max_item"], f"{param} item")
                 if not is_valid: return False, msg
         elif rules["type"] in [int, float]:
-            is_valid, msg = _validate_range(value, rules["min"], rules["max"], param)
-            if not is_valid: return False, msg
+            if not isinstance(value, str):
+                is_valid, msg = _validate_range(value, rules["min"], rules["max"], param)
+                if not is_valid: return False, msg
         elif rules["type"] == str:
             if "allowed" in rules and value not in rules["allowed"]:
                 return False, f"Parameter '{param}' must be one of {rules['allowed']}"
@@ -249,8 +270,8 @@ def get_llm_inferred_params():
         output = json.loads(process.stdout)
         return jsonify({
             "status": "success",
-            "inferred_simulation_params": output.get("inferred_simulation_params"),
-            "inferred_visualization_params": output.get("inferred_visualization_params")
+            "simulation_params": output.get("simulation_params"),
+            "visualization_params": output.get("visualization_params")
         }), 200
     except subprocess.CalledProcessError as e:
         logger.error(f"Error inferring parameters: {e.stderr}")
@@ -261,6 +282,81 @@ def get_llm_inferred_params():
     except Exception as e:
         logger.error(f"An unexpected error occurred: {e}")
         return jsonify({"status": "error", "message": "An internal server error occurred."}), 500
+
+@app.route('/api/run_preview', methods=['POST'])
+def run_preview():
+    params = request.get_json()
+    sim_params_input = params.get("simulation_params", {})
+    viz_params_input = params.get("visualization_params", {})
+    preview_settings = params.get("preview_settings", {})
+
+    # Validate parameters
+    is_valid, error_msg = validate_params({"simulation_params": sim_params_input, "visualization_params": viz_params_input})
+    if not is_valid:
+        return jsonify({"status": "error", "message": error_msg}), 400
+
+    duration_frames = preview_settings.get("duration_frames", 30)
+    # resolution_scale = preview_settings.get("resolution_scale", 0.5) # Not used in this backend part yet
+
+    preview_data = {"frame_data": []}
+
+    for i in range(duration_frames):
+        t = i # Time variable 't' corresponds to the frame number
+        evaluated_sim_params = {}
+        evaluated_viz_params = {}
+
+        # Evaluate simulation parameters
+        for key, value in sim_params_input.items():
+            if isinstance(value, str):
+                try:
+                    evaluated_sim_params[key] = param_evaluator.evaluate(value, t=t)
+                except ValueError as e:
+                    return jsonify({"status": "error", "message": f"Error evaluating simulation parameter '{key}': {e}"}), 400
+            elif isinstance(value, list):
+                # Handle lists that might contain string expressions (e.g., initial_shape_position)
+                evaluated_list = []
+                for item in value:
+                    if isinstance(item, str):
+                        try:
+                            evaluated_list.append(param_evaluator.evaluate(item, t=t))
+                        except ValueError as e:
+                            return jsonify({"status": "error", "message": f"Error evaluating list item in simulation parameter '{key}': {e}"}), 400
+                    else:
+                        evaluated_list.append(item)
+                evaluated_sim_params[key] = evaluated_list
+            else:
+                evaluated_sim_params[key] = value
+        
+        # Evaluate visualization parameters
+        for key, value in viz_params_input.items():
+            if isinstance(value, str):
+                try:
+                    evaluated_viz_params[key] = param_evaluator.evaluate(value, t=t)
+                except ValueError as e:
+                    return jsonify({"status": "error", "message": f"Error evaluating visualization parameter '{key}': {e}"}), 400
+            elif isinstance(value, list):
+                evaluated_list = []
+                for item in value:
+                    if isinstance(item, str):
+                        try:
+                            evaluated_list.append(param_evaluator.evaluate(item, t=t))
+                        except ValueError as e:
+                            return jsonify({"status": "error", "message": f"Error evaluating list item in visualization parameter '{key}': {e}"}), 400
+                    else:
+                        evaluated_list.append(item)
+                evaluated_viz_params[key] = evaluated_list
+            else:
+                evaluated_viz_params[key] = value
+
+        # Combine and store for the current frame
+        frame_data_entry = {
+            "frame": i,
+            **evaluated_sim_params,
+            **evaluated_viz_params
+        }
+        preview_data["frame_data"].append(frame_data_entry)
+
+    return jsonify({"status": "success", "message": "Preview data generated successfully.", "preview_data": preview_data}), 200
 
 # API Endpoint to stop the pipeline
 @app.route('/api/stop_pipeline', methods=['POST'])

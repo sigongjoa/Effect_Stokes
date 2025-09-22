@@ -1,6 +1,214 @@
 import bpy
 import numpy as np
 import os
+import json
+import sys
+
+# Add the src directory to the Python path to import ParamEvaluator
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'src')))
+from param_evaluator import ParamEvaluator
+
+class BlenderFluidVisualizer:
+    def __init__(self):
+        self.param_evaluator = ParamEvaluator()
+
+    def _clear_scene(self):
+        bpy.ops.object.select_all(action='SELECT')
+        bpy.ops.object.delete(use_global=False)
+
+        # Create a new camera
+        bpy.ops.object.camera_add(location=(0, -5, 2))
+        bpy.context.scene.camera = bpy.context.object
+
+        # Create a new light (Sun lamp)
+        bpy.ops.object.light_add(type='SUN', location=(0, 0, 5))
+        bpy.context.object.data.energy = 3.0
+
+    def setup_scene_and_render(self, fluid_data_path, render_output_path, simulation_params_json, visualization_params_json):
+        self._clear_scene()
+
+        # Parse JSON strings into dictionaries
+        simulation_params = json.loads(simulation_params_json)
+        visualization_params = json.loads(visualization_params_json)
+
+        # Get total frames from simulation parameters
+        total_frames = simulation_params.get("time_steps", 30)
+        bpy.context.scene.frame_end = total_frames - 1
+
+        # Set render settings
+        bpy.context.scene.render.image_settings.file_format = 'PNG'
+        bpy.context.scene.render.filepath = render_output_path
+        bpy.context.scene.render.resolution_x = 1080
+        bpy.context.scene.render.resolution_y = 1080
+        bpy.context.scene.render.engine = 'CYCLES'
+        bpy.context.scene.cycles.samples = visualization_params.get("render_samples", 128)
+
+        # Create a collection for fluid arrows
+        fluid_collection = bpy.data.collections.new("FluidArrows")
+        bpy.context.scene.collection.children.link(fluid_collection)
+
+        # Create a base arrow mesh (cone for simplicity)
+        bpy.ops.mesh.primitive_cone_add(radius1=0.05, depth=0.2, enter_editmode=False, align='WORLD', location=(0,0,0))
+        base_arrow = bpy.context.object
+        base_arrow.name = "BaseArrow"
+        base_arrow.hide_render = True # Hide the base arrow, we'll instance it
+
+        # Create a material for the arrows
+        arrow_material = bpy.data.materials.new(name="ArrowMaterial")
+        arrow_material.use_nodes = True
+        bsdf = arrow_material.node_tree.nodes["Principled BSDF"]
+        # Set base color (will be updated per frame)
+        bsdf.inputs['Base Color'].default_value = (0.0, 0.0, 0.8, 1)
+        # Set emission (will be updated per frame)
+        emission = arrow_material.node_tree.nodes.new(type='ShaderNodeEmission')
+        emission.inputs['Color'].default_value = (0.0, 0.0, 0.8, 1)
+        emission.inputs['Strength'].default_value = 50.0
+        arrow_material.node_tree.links.new(emission.outputs['Emission'], bsdf.inputs['Emission'])
+        # Set transparency
+        bsdf.inputs['Alpha'].default_value = visualization_params.get("transparency_alpha", 0.1)
+        arrow_material.blend_method = 'BLEND'
+        arrow_material.shadow_method = 'NONE'
+
+        # Link material to base arrow
+        if base_arrow.data.materials:
+            base_arrow.data.materials[0] = arrow_material
+        else:
+            base_arrow.data.materials.append(arrow_material)
+
+        # Load fluid data and create instances per frame
+        for frame_idx in range(total_frames):
+            bpy.context.scene.frame_set(frame_idx)
+
+            # Evaluate time-dependent visualization parameters for the current frame
+            current_viz_params = {}
+            for key, value in visualization_params.items():
+                if isinstance(value, str):
+                    try:
+                        current_viz_params[key] = self.param_evaluator.evaluate(value, t=frame_idx)
+                    except ValueError as e:
+                        print(f"Error evaluating visualization parameter '{key}' at frame {frame_idx}: {e}", file=sys.stderr)
+                        current_viz_params[key] = visualization_params.get(key) # Fallback to original
+                elif isinstance(value, list):
+                    evaluated_list = []
+                    for item in value:
+                        if isinstance(item, str):
+                            try:
+                                evaluated_list.append(self.param_evaluator.evaluate(item, t=frame_idx))
+                            except ValueError as e:
+                                print(f"Error evaluating list item in visualization parameter '{key}' at frame {frame_idx}: {e}", file=sys.stderr)
+                                evaluated_list.append(item) # Fallback to original
+                        else:
+                            evaluated_list.append(item)
+                    current_viz_params[key] = evaluated_list
+                else:
+                    current_viz_params[key] = value
+            
+            # Evaluate time-dependent simulation parameters that might affect visualization
+            current_sim_params = {}
+            for key, value in simulation_params.items():
+                if isinstance(value, str):
+                    try:
+                        current_sim_params[key] = self.param_evaluator.evaluate(value, t=frame_idx)
+                    except ValueError as e:
+                        print(f"Error evaluating simulation parameter '{key}' at frame {frame_idx}: {e}", file=sys.stderr)
+                        current_sim_params[key] = simulation_params.get(key) # Fallback to original
+                else:
+                    current_sim_params[key] = value
+
+            # Update material properties
+            arrow_color = current_viz_params.get("arrow_color", [0.0, 0.0, 0.8])
+            emission_strength = current_viz_params.get("emission_strength", 50.0)
+            transparency_alpha = current_viz_params.get("transparency_alpha", 0.1)
+            light_energy = current_viz_params.get("light_energy", 3.0)
+            camera_location = current_viz_params.get("camera_location", [0, -5, 2])
+
+            arrow_material.node_tree.nodes["Principled BSDF"].inputs['Base Color'].default_value = (*arrow_color, 1)
+            arrow_material.node_tree.nodes["Emission"].inputs['Color'].default_value = (*arrow_color, 1)
+            arrow_material.node_tree.nodes["Emission"].inputs['Strength'].default_value = emission_strength
+            arrow_material.node_tree.nodes["Principled BSDF"].inputs['Alpha'].default_value = transparency_alpha
+            
+            # Update light and camera
+            bpy.data.lights['Sun'].energy = light_energy
+            bpy.context.scene.camera.location = camera_location
+
+            # Load fluid data for the current frame
+            frame_fluid_data_path = os.path.join(fluid_data_path, f"fluid_data_frame_{frame_idx:04d}.npz")
+            if not os.path.exists(frame_fluid_data_path):
+                print(f"Warning: Fluid data for frame {frame_idx} not found at {frame_fluid_data_path}", file=sys.stderr)
+                continue
+            fluid_data = np.load(frame_fluid_data_path)
+            u = fluid_data['u']
+            v = fluid_data['v']
+            x = fluid_data['x']
+            y = fluid_data['y']
+
+            # Clear previous arrows for this frame (if any) - for animation
+            # For instancing, we create them once and update visibility/position
+            # For now, we'll just create new ones and let Blender handle cleanup if needed
+            # A more efficient way would be to update existing instances.
+            for obj in fluid_collection.objects:
+                if obj.name.startswith("FluidArrow_"):
+                    bpy.data.objects.remove(obj, do_unlink=True)
+
+            # Create arrows based on fluid velocity (simplified)
+            arrow_density = current_viz_params.get("arrow_density", 15)
+            arrow_scale_factor = current_viz_params.get("arrow_scale_factor", 3.0)
+
+            # Downsample grid for arrow visualization
+            step_x = max(1, u.shape[0] // arrow_density)
+            step_y = max(1, u.shape[1] // arrow_density)
+
+            for i_x in range(0, u.shape[0], step_x):
+                for i_y in range(0, u.shape[1], step_y):
+                    pos_x = x[i_x]
+                    pos_y = y[i_y]
+                    vel_u = u[i_x, i_y]
+                    vel_v = v[i_x, i_y]
+
+                    speed = np.sqrt(vel_u**2 + vel_v**2)
+                    if speed > 1e-6: # Avoid division by zero for zero velocity
+                        direction_x = vel_u / speed
+                        direction_y = vel_v / speed
+
+                        # Create an instance of the base arrow
+                        arrow_instance = bpy.data.objects.new(f"FluidArrow_{frame_idx}_{i_x}_{i_y}", base_arrow.data)
+                        fluid_collection.objects.link(arrow_instance)
+                        arrow_instance.location = (pos_x, pos_y, 0) # Z-position can be adjusted
+                        
+                        # Scale arrow based on speed
+                        arrow_instance.scale = (arrow_scale_factor * speed, arrow_scale_factor * speed, arrow_scale_factor * speed)
+
+                        # Rotate arrow to align with velocity direction
+                        # Angle from positive X-axis to (direction_x, direction_y)
+                        angle = np.arctan2(direction_y, direction_x)
+                        arrow_instance.rotation_euler = (0, 0, angle)
+
+            # Render the current frame
+            bpy.context.scene.render.filepath = os.path.join(render_output_path, f"frame_{frame_idx:04d}")
+            bpy.ops.render.render(write_still=True)
+
+        print("Blender rendering complete.")
+
+
+if __name__ == "__main__":
+    # This script is intended to be run from Blender using --python
+    # Arguments are passed after --
+    if "--" in sys.argv:
+        argv = sys.argv[sys.argv.index("--") + 1:]
+        if len(argv) == 4:
+            fluid_data_path = argv[0]
+            render_output_path = argv[1]
+            simulation_params_json = argv[2]
+            visualization_params_json = argv[3]
+
+            visualizer = BlenderFluidVisualizer()
+            visualizer.setup_scene_and_render(fluid_data_path, render_output_path, simulation_params_json, visualization_params_json)
+        else:
+            print("Error: Expected 4 arguments (fluid_data_path, render_output_path, simulation_params_json, visualization_params_json) after --", file=sys.stderr)
+            sys.exit(1)
+    else:
+        print("Error: Arguments must be passed after --", file=sys.stderr)
+        sys.exit(1)
 import sys
 import json
 import bmesh

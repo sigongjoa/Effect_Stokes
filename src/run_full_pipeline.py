@@ -70,28 +70,30 @@ def main(simulation_params_json=None, visualization_params_json=None):
     sim_command = [sys.executable, RUN_SIMULATION_SCRIPT]
     if simulation_params_json:
         sim_command.append(simulation_params_json)
+    else:
+        sim_command.append("{}") # Pass empty JSON if no params provided
     if visualization_params_json:
         sim_command.append(visualization_params_json)
+    else:
+        sim_command.append("{}") # Pass empty JSON if no params provided
     simulation_output = run_command(sim_command, cwd=PROJECT_ROOT)
 
     # Parse simulation output to get necessary parameters for Blender visualization
     try:
         result_data = json.loads(simulation_output)
         fluid_data_path = result_data.get("output_data_path")
-        # If not provided, use the ones from the simulation_agent's output
-        if visualization_params_json:
-            visualization_params_to_use_str = visualization_params_json
-        else:
-            visualization_params_to_use_str = json.dumps(result_data.get("visualization_params", {}))
-        
-        # Always use the simulation parameters from the simulation result
-        simulation_params_from_result_str = json.dumps(result_data.get("simulation_params", {}))
+        # The simulation_params and visualization_params returned by run_full_simulation.py
+        # are the *original* (potentially function-based) ones passed in.
+        # We need to pass these raw strings to blender_oneshot_cmd.
+        simulation_params_to_use_str = json.dumps(result_data.get("simulation_params", {}))
+        visualization_params_to_use_str = json.dumps(result_data.get("visualization_params", {}))
+
     except json.JSONDecodeError as e:
         print(f"Error parsing simulation result JSON: {e}")
         sys.exit(1)
     
-    if not fluid_data_path or not visualization_params_to_use_str:
-        print("Error: Could not parse fluid data path or visualization parameters from simulation output.")
+    if not fluid_data_path:
+        print("Error: Could not parse fluid data path from simulation output.")
         sys.exit(1)
 
     # Ensure output directory for frames exists
@@ -108,9 +110,8 @@ def main(simulation_params_json=None, visualization_params_json=None):
         "--",
         fluid_data_path,
         render_output_path,
-        # Pass both simulation and visualization params to oneshot script
-        simulation_params_from_result_str, # oneshot script needs sim params for time_steps etc.
-        visualization_params_to_use_str # Use the (inferred or provided) viz params
+        simulation_params_to_use_str, # Pass raw sim params
+        visualization_params_to_use_str # Pass raw viz params
     ]
     run_command(blender_oneshot_cmd, cwd=PROJECT_ROOT)
 
@@ -124,12 +125,10 @@ def main(simulation_params_json=None, visualization_params_json=None):
 
 if __name__ == "__main__":
     # Parse parameters from command line when run directly
+    sim_params_json_arg = "{}"
+    viz_params_json_arg = "{}"
+    if len(sys.argv) > 1:
+        sim_params_json_arg = sys.argv[1]
     if len(sys.argv) > 2:
-        sim_params_json = sys.argv[1]
-        viz_params_json = sys.argv[2]
-        main(sim_params_json, viz_params_json)
-    else:
-        # Run with default parameters if no args provided (for testing/dev)
-        # This will use the defaults hardcoded in simulation_agent.py
-        print("Running pipeline with default parameters. For custom parameters, provide JSON strings as arguments.")
-        main()
+        viz_params_json_arg = sys.argv[2]
+    main(sim_params_json_arg, viz_params_json_arg)

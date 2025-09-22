@@ -7,6 +7,8 @@ import os
 import ollama # Import ollama
 # import openai # Remove or comment out if not using OpenAI
 
+import sys
+
 class LLMInterface:
     def __init__(self, llm_type="ollama", model_name="llama2", api_key=None, base_url="http://localhost:11434"):
         self.llm_type = llm_type
@@ -23,8 +25,86 @@ class LLMInterface:
         else:
             raise ValueError(f"Unsupported LLM type: {llm_type}. Choose 'openai' or 'ollama'.")
 
+    def infer_simulation_and_visualization_parameters(self, effect_keywords):
+        system_message = "You are a helpful assistant that infers simulation and visualization parameters for fluid effects."
+        user_message = f"""
+        Based on the following effect description, infer suitable simulation and visualization parameters.
+        Effect Description: "{effect_keywords}"
+
+        Provide the output in a single JSON object with two top-level keys: "simulation_params" and "visualization_params".
+
+        **Important**: For parameters that can change over time, provide them as a string representing a mathematical function of 't' (time). For fixed parameters, provide them as their direct value.
+
+        **simulation_params** should include:
+        - "grid_resolution": [int, int] (e.g., [101, 101])
+        - "time_steps": int (e.g., 30)
+        - "viscosity": float or string (e.g., 0.02 or "0.02 + 0.01 * sin(t * 0.1)")
+        - "initial_shape_type": string (e.g., "vortex", "crescent", "circle_burst")
+        - "initial_shape_position": [float, float] (e.g., [1.0, 1.0])
+        - "initial_shape_size": float or string (e.g., 0.4 or "0.4 + 0.1 * (t / 60)")
+        - "initial_velocity": [float, float] (e.g., [0.0, 0.0])
+        - "boundary_conditions": string (e.g., "no_slip_walls")
+        - "vortex_strength": float or string (e.g., 1.2 or "1.2 * exp(-t / 30)") (if vfx_type is vortex)
+        - "source_strength": float or string (e.g., 2.0 or "2.0 * (1 - (t / 60))") (if vfx_type is source/burst)
+
+        **visualization_params** should include:
+        - "arrow_color": [float, float, float] (RGB, e.g., [0.0, 0.0, 0.8])
+        - "arrow_scale_factor": float or string (e.g., 3.0 or "3.0 + 1.0 * sin(t * 0.2)")
+        - "arrow_density": int (e.g., 15)
+        - "emission_strength": float or string (e.g., 50.0 or "50.0 * (t / 60)")
+        - "transparency_alpha": float (e.g., 0.1)
+        - "camera_location": [float, float, float] (e.g., [0, -5, 2])
+        - "light_energy": float (e.g., 3.0)
+        - "render_samples": int (e.g., 128)
+
+        Ensure all values are of the correct type (float, int, string for functions, or list). Provide only the JSON object as your response.
+        """
+        messages = [
+            {"role": "system", "content": system_message},
+            {"role": "user", "content": user_message}
+        ]
+        print("[LLMInterface] Messages being sent to LLM for parameter inference:", file=sys.stderr)
+        print(messages, file=sys.stderr)
+
+        try:
+            response = None
+            if self.llm_type == "openai":
+                response = self.client.chat.completions.create(
+                    model=self.model_name,
+                    messages=messages,
+                    response_format={"type": "json_object"},
+                    temperature=0.7,
+                )
+                content = response.choices[0].message.content
+            elif self.llm_type == "ollama":
+                response = self.client.chat(
+                    model=self.model_name,
+                    messages=messages,
+                    options={'temperature': 0.7}
+                )
+                print(f"DEBUG Ollama raw response for inference: {response}", file=sys.stderr)
+                content = response['message']['content']
+            else:
+                raise ValueError("Invalid LLM type configured.")
+
+            print(f"LLM Raw Inference Response Content: {content}", file=sys.stderr)
+            match = re.search(r'{.*}', content, re.DOTALL)
+            if match:
+                json_content = match.group(0)
+                json_content = json_content.replace("True", "true").replace("False", "false")
+                parsed_json = json.loads(json_content)
+                return parsed_json
+            else:
+                return {"error": "Could not extract valid JSON from LLM inference response.", "raw_content": content}
+
+        except Exception as e:
+            print(f"LLM Parameter Inference Error: {e}", file=sys.stderr)
+            if response:
+                print(f"LLM response that caused error: {response}", file=sys.stderr)
+            raise
+
     def generate_code(self, task_name, params):
-        print(f"[LLMInterface] generate_code called with task_name: {task_name}, params: {params}")
+        print(f"[LLMInterface] generate_code called with task_name: {task_name}, params: {params}", file=sys.stderr)
 
         # 프롬프트 구성 (예시)
         if task_name == "extract_vfx_params":
@@ -78,8 +158,8 @@ class LLMInterface:
             {"role": "system", "content": system_message},
             {"role": "user", "content": user_message}
         ]
-        print("[LLMInterface] Messages being sent to LLM:")
-        print(messages)
+        print("[LLMInterface] Messages being sent to LLM:", file=sys.stderr)
+        print(messages, file=sys.stderr)
 
         try:
             if self.llm_type == "openai":
@@ -97,12 +177,12 @@ class LLMInterface:
                     messages=messages,
                     options={'temperature': 0.7}
                 )
-                print(f"DEBUG Ollama raw response: {response}") # Added for debugging
+                print(f"DEBUG Ollama raw response: {response}", file=sys.stderr)
                 content = response['message']['content']
             else:
                 raise ValueError("Invalid LLM type configured.")
 
-            print(f"LLM Raw Response: {content}")
+            print(f"LLM Raw Response: {content}", file=sys.stderr)
             if task_name in ["extract_vfx_params", "generate_blender_script_params"]:
                 # Use regex to find the JSON block. This is more robust.
                 match = re.search(r'{.*}', content, re.DOTALL)
@@ -120,9 +200,9 @@ class LLMInterface:
                 return parsed_json
             return content
         except Exception as e: # Catch all exceptions for now, refine later
-            print(f"LLM 코드 생성 오류: {e}")
+            print(f"LLM 코드 생성 오류: {e}", file=sys.stderr)
             # Fallback to default or raise error
             if task_name == "extract_vfx_params":
-                print("기본값으로 파이프라인을 계속 진행합니다.")
+                print("기본값으로 파이프라인을 계속 진행합니다.", file=sys.stderr)
                 return {'vfx_type': 'fire', 'style': 'realistic', 'duration': 3, 'colors': ['red', 'yellow'], 'camera_speed': 'static'}
             raise

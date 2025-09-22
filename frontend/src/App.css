@@ -1,0 +1,76 @@
+.App {
+  text-align: center;
+}
+
+.App-header {
+  background-color: #282c34;
+  padding: 20px;
+  color: white;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.App-content {
+  display: flex;
+  justify-content: space-around;
+  padding: 20px;
+  flex-wrap: wrap; /* Allow panels to wrap on smaller screens */
+}
+
+.controls-panel,
+.status-panel,
+.results-panel {
+  background-color: #f0f0f0;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  padding: 20px;
+  margin: 10px;
+  flex: 1; /* Distribute space equally */
+  min-width: 300px; /* Minimum width for panels */
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.log-console {
+  background-color: #333;
+  color: #0f0;
+  border: 1px solid #555;
+  height: 300px;
+  overflow-y: scroll;
+  padding: 10px;
+  font-family: 'Courier New', Courier, monospace;
+  text-align: left;
+}
+
+.log-console p {
+  margin: 0;
+  padding: 2px 0;
+  border-bottom: 1px dotted #555;
+}
+
+.log-console p:last-child {
+  border-bottom: none;
+}
+
+button {
+  background-color: #61dafb;
+  color: white;
+  border: none;
+  padding: 10px 20px;
+  margin: 5px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 16px;
+}
+
+button:disabled {
+  background-color: #cccccc;
+  cursor: not-allowed;
+}
+
+/* Basic styling for images in results */
+.results-panel img {
+  max-width: 100%;
+  height: auto;
+  border: 1px solid #ccc;
+  margin-top: 10px;
+}

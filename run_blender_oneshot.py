@@ -209,7 +209,7 @@ if __name__ == "__main__":
             data_dir, render_path, sim_params_json, viz_params_json = args
             simulation_params = json.loads(sim_params_json)
             visualization_params = json.loads(viz_params_json)
-            run_oneshot_process(data_dir, render_path, simulation_params, visualization_params)
+            run_oneshot_process(data_dir, render_path, sim_params_json, viz_params_json)
         else:
             print("Usage: blender --background --python run_blender_oneshot.py -- <data_dir> <render_output_path> <simulation_params_json> <visualization_params_json>")
             sys.exit(1)
