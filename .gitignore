@@ -33,6 +33,7 @@ blender/*.blend_backup
 # Generated workspace files
 workspace/generated_scripts/
 workspace/outputs/
+outputs/
 
 # Dependencies
 venv/

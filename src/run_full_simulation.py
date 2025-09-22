@@ -10,40 +10,51 @@ from simulation_agent import SimulationAgent
 if __name__ == "__main__":
     agent = SimulationAgent()
 
-    # --- Demonstrate Generalization with a new effect: "a swirling vortex of blue liquid" ---
+    # Default parameters
+    default_simulation_params = {
+        "grid_resolution": (101, 101),
+        "time_steps": 30,
+        "viscosity": 0.02,
+        "initial_shape_position": (1.0, 1.0),
+        "initial_shape_size": 0.4,
+        "vortex_strength": 1.2,
+    }
+    default_visualization_params = {
+        "arrow_color": (0.0, 0.0, 0.8),
+        "arrow_scale_factor": 3.0,
+        "arrow_density": 15,
+    }
     effect_description = {
         "vfx_type": "swirling vortex",
         "style": "blue liquid"
     }
-    # Explicit parameters can override inferred ones or provide details not easily inferred
-    simulation_params = {
-        "grid_resolution": (101, 101), # Higher resolution
-        "time_steps": 30, # Longer simulation
-        "viscosity": 0.02, # Clearer vortex
-        "initial_shape_position": (1.0, 1.0), # Center the vortex
-        "initial_shape_size": 0.4, # Larger vortex
-        "vortex_strength": 1.2, # Stronger vortex
-    }
-    visualization_params = {
-        "arrow_color": (0.0, 0.0, 0.8), # Darker blue
-        "arrow_scale_factor": 3.0, # More pronounced arrows
-        "arrow_density": 15, # Denser arrows
-    }
 
-    print(f"[run_full_simulation] Calling SimulationAgent with effect: '{effect_description}'")
+    # Parse parameters from command line if provided
+    if len(sys.argv) > 1:
+        try:
+            # sys.argv[1] should be the JSON string for simulation_params
+            provided_simulation_params = json.loads(sys.argv[1])
+            # Merge provided params with defaults, provided takes precedence
+            simulation_params_to_use = {**default_simulation_params, **provided_simulation_params}
+        except json.JSONDecodeError:
+            print("Error: Invalid JSON for simulation parameters provided.")
+            sys.exit(1)
+    else:
+        simulation_params_to_use = default_simulation_params
+
+    # Visualization params are not passed to run_full_simulation directly,
+    # but inferred by SimulationAgent. We keep default_visualization_params
+    # here for consistency with the original structure, though it's not used
+    # as a direct override in agent.run_simulation() from this script.
+    # The agent's internal inference logic will handle visualization_params.
+
     result = agent.run_simulation(
         effect_description=effect_description,
-        simulation_params=simulation_params,
-        visualization_params=visualization_params
+        simulation_params=simulation_params_to_use,
+        # visualization_params are inferred by the agent, not directly passed from here
+        # unless we want to override agent's inference. For now, let agent infer.
     )
-    print(f"[run_full_simulation] Full simulation pipeline completed. Result: {json.dumps(result, indent=2)}")
+    print(json.dumps(result, indent=2))
 
-    # --- Instructions for the user to visualize in Blender ---
-    if result["status"] == "success":
-        fluid_data_path = result["output_data_path"]
-        print("\n--- Next Steps for Blender Visualization ---")
-        print(f"Fluid simulation data has been generated and saved to: {fluid_data_path}")
-        print("You can now use the 'workspace/blender_fluid_visualizer.py' script to visualize this data in Blender.")
-        print("To do so, open Blender and run the script, passing the data path and desired output blend file:")
-        print(f"blender --background --python /mnt/d/progress/Effect_Stokes/src/blender_fluid_visualizer.py -- {fluid_data_path} /mnt/d/progress/Effect_Stokes/outputs/my_custom_fluid_vfx.blend {json.dumps(result["inferred_visualization_params"])}")
-        print("Remember to adjust the output blend file path as needed.")
+    # The "Next Steps for Blender Visualization" part is now handled by run_full_pipeline.py
+    # so we can remove it from here.

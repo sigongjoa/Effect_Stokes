@@ -15,7 +15,6 @@ class SimulationAgent:
         os.makedirs(self.output_dir, exist_ok=True)
 
     def run_simulation(self, effect_description: dict, simulation_params: dict = None, visualization_params: dict = None):
-        print(f"[SimulationAgent] Running simulation for: '{effect_description}'")
 
         # Extract a string for keyword-based inference
         effect_keywords = effect_description.get('vfx_type', '') + " " + effect_description.get('style', '')
@@ -68,15 +67,11 @@ class SimulationAgent:
         if visualization_params:
             inferred_viz_params.update(visualization_params)
 
-        print(f"[SimulationAgent] Inferred Simulation Params: {inferred_sim_params}")
-        print(f"[SimulationAgent] Inferred Visualization Params: {inferred_viz_params}")
-
         # Define paths
         fluid_data_dir = os.path.join(self.output_dir, "fluid_data")
         os.makedirs(fluid_data_dir, exist_ok=True)
 
         # --- 2. Run Python Navier-Stokes simulation to generate .npz data ---
-        print("[SimulationAgent] Running Python Navier-Stokes simulation...")
         python_sim_script_path = os.path.join(os.getcwd(), "tests", "navier_stokes_test.py")
         python_command = [
             os.path.join(os.getcwd(), "venv", "bin", "python"), # Path to venv python
@@ -86,19 +81,10 @@ class SimulationAgent:
         ]
         try:
             result = subprocess.run(python_command, capture_output=True, text=True, check=True)
-            print("[SimulationAgent] Python Sim Stdout:", result.stdout)
-            if result.stderr:
-                print("[SimulationAgent] Python Sim Stderr:", result.stderr)
         except subprocess.CalledProcessError as e:
-            print(f"[SimulationAgent] Error during Python simulation: {e}")
-            print("[SimulationAgent] Python Sim Stdout:", e.stdout)
-            print("[SimulationAgent] Python Sim Stderr:", e.stderr)
             raise
         except Exception as e:
-            print(f"[SimulationAgent] An unexpected error occurred during Python simulation: {e}")
             raise
-
-        print(f"[SimulationAgent] Simulation complete. Fluid data saved to: {fluid_data_dir}")
 
         return {
             "status": "success",

@@ -103,7 +103,7 @@ def animate_getsuga_vfx(all_fluid_data, mesh_objects, viz_params, scene):
 
 # --- Main Execution Block ---
 
-def run_oneshot_process(data_dir, render_output_path, viz_params):
+def run_oneshot_process(data_dir, render_output_path, simulation_params, visualization_params):
     print("--- Blender One-Shot Process Started ---")
     
     # 1. Scene Setup
@@ -111,23 +111,46 @@ def run_oneshot_process(data_dir, render_output_path, viz_params):
     bpy.ops.wm.read_factory_settings(use_empty=True)
     enable_gpu_rendering() # Configure GPU rendering AFTER clearing factory settings
     scene = bpy.context.scene
-    mesh_params = viz_params.get("mesh_params", {})
-    material_params = viz_params.get("material_params", {})
+    
+    # Use provided simulation_params for time_steps
+    scene.frame_end = simulation_params.get("time_steps", 30) - 1 # Adjust for 0-based indexing
+
+    # Use provided visualization_params for material and mesh
+    mesh_params = visualization_params.get("mesh_params", {})
+    material_params = visualization_params.get("material_params", {})
 
     # 2. Load Data
     print("\n--- Step 2: Loading fluid data ---")
     fluid_data_files = sorted([f for f in os.listdir(data_dir) if f.startswith("fluid_data_") and f.endswith(".npz")])
     if not fluid_data_files:
         raise FileNotFoundError(f"No fluid data files found in {data_dir}")
-    all_fluid_data = [np.load(os.path.join(data_dir, f)) for f in fluid_data_files]
-    scene.frame_end = len(all_fluid_data) - 1
+    
+    # Only load up to scene.frame_end + 1 files
+    all_fluid_data = []
+    for i in range(scene.frame_end + 1):
+        # Assuming fluid_data_XXXX.npz corresponds to frame X
+        # We need to find the file for the current frame_idx
+        # The simulation saves every 10 steps, so we need to adjust
+        sim_step = i * 10 # Assuming simulation saves every 10 steps
+        filename = f"fluid_data_{sim_step:04d}.npz"
+        filepath = os.path.join(data_dir, filename)
+        if not os.path.exists(filepath):
+            print(f"Warning: Fluid data file for frame {i} (sim step {sim_step}) not found: {filepath}. Using previous frame's data.")
+            # Use previous frame's data if current not found, or break if first frame missing
+            if all_fluid_data:
+                all_fluid_data.append(all_fluid_data[-1])
+            else:
+                raise FileNotFoundError(f"First fluid data file {filepath} not found.")
+        else:
+            all_fluid_data.append(np.load(filepath))
 
     # 3. Create Objects
     print("\n--- Step 3: Creating VFX objects ---")
     getsuga_material = create_getsuga_material(material_params)
     mesh_objects = []
-    for i, frame_data in enumerate(all_fluid_data):
-        mesh_data = create_getsuga_mesh(frame_data, mesh_params)
+    for i, frame_data_npz in enumerate(all_fluid_data):
+        # Pass simulation_params to create_getsuga_mesh for pressure_threshold etc.
+        mesh_data = create_getsuga_mesh(frame_data_npz, simulation_params)
         mesh_obj = bpy.data.objects.new(f"GetsugaVFX_Frame_{i:04d}", mesh_data)
         scene.collection.objects.link(mesh_obj)
         mesh_obj.data.materials.append(getsuga_material)
@@ -136,15 +159,18 @@ def run_oneshot_process(data_dir, render_output_path, viz_params):
 
     # 4. Animate
     print("\n--- Step 4: Animating objects ---")
-    animate_getsuga_vfx(all_fluid_data, mesh_objects, viz_params, scene)
-    # Basic Camera Setup
-    bpy.ops.object.camera_add(location=(10, -15, 5))
+    animate_getsuga_vfx(all_fluid_data, mesh_objects, visualization_params, scene) # Pass visualization_params
+
+    # Basic Camera Setup (using visualization_params for location if available)
+    camera_location = visualization_params.get("camera_location", (0, -5, 2))
+    bpy.ops.object.camera_add(location=camera_location)
     scene.camera = bpy.context.object
 
-    # Add a light
+    # Add a light (using visualization_params for light_energy if available)
+    light_energy = visualization_params.get("light_energy", 3.0)
     bpy.ops.object.light_add(type='SUN', location=(5, 5, 10))
     light = bpy.context.object
-    light.data.energy = 3.0
+    light.data.energy = light_energy
     light.data.angle = 0.5 # Softer shadows
 
     # Camera tracking setup
@@ -166,6 +192,12 @@ def run_oneshot_process(data_dir, render_output_path, viz_params):
     print("\n--- Step 6: Starting final render ---")
     scene.render.filepath = render_output_path
     scene.render.image_settings.file_format = 'PNG'
+
+    # Set render samples from visualization_params, default to 128 for testing
+    render_samples = visualization_params.get("render_samples", 128)
+    bpy.context.scene.cycles.samples = render_samples
+    print(f"[INFO] Setting Cycles render samples to: {render_samples}")
+
     bpy.ops.render.render(animation=True)
 
     print("--- Blender One-Shot Process Finished ---")
@@ -173,12 +205,13 @@ def run_oneshot_process(data_dir, render_output_path, viz_params):
 if __name__ == "__main__":
     if "--" in sys.argv:
         args = sys.argv[sys.argv.index("--") + 1:]
-        if len(args) == 3:
-            data_dir, render_path, viz_params_json = args
-            viz_params = json.loads(viz_params_json)
-            run_oneshot_process(data_dir, render_path, viz_params)
+        if len(args) == 4: # data_dir, render_path, sim_params_json, viz_params_json
+            data_dir, render_path, sim_params_json, viz_params_json = args
+            simulation_params = json.loads(sim_params_json)
+            visualization_params = json.loads(viz_params_json)
+            run_oneshot_process(data_dir, render_path, simulation_params, visualization_params)
         else:
-            print("Usage: blender --background --python run_blender_oneshot.py -- <data_dir> <render_output_path> <viz_params_json>")
+            print("Usage: blender --background --python run_blender_oneshot.py -- <data_dir> <render_output_path> <simulation_params_json> <visualization_params_json>")
             sys.exit(1)
     else:
         print("Error: No arguments provided.")

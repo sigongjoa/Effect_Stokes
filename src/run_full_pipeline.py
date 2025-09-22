@@ -25,14 +25,13 @@ def run_command(cmd, cwd=None):
             if output == '' and process.poll() is not None:
                 break
             if output:
-                print(output.strip()) # Print live output
+                print(output.strip()) # Always print live output for debugging
                 lines.append(output)
                 
         rc = process.poll()
         full_output = "".join(lines)
 
         if rc != 0:
-            # The output was already printed live, so just raise the error
             raise subprocess.CalledProcessError(rc, cmd, output=full_output)
             
         return full_output
@@ -42,40 +41,54 @@ def run_command(cmd, cwd=None):
         # The output was already printed, so no need to print e.stdout again
         raise
 
-def main():
+def create_gif_from_frames(input_frame_path, output_gif_path, fps=15):
+    print(f"\n--- Step 7: Creating GIF from frames ---")
+    # FFmpeg command to create a GIF from PNG sequence
+    # -i: input file pattern (e.g., frame_%04d.png)
+    # -vf: video filters (scale, fps, palettegen/paletteuse for optimized GIF)
+    # -loop 0: loop indefinitely
+    # -y: overwrite output file without asking
+    gif_command = [
+        "ffmpeg",
+        "-y", # Overwrite output file without asking
+        "-i", input_frame_path.replace("frame_####", "frame_%04d.png"),
+        "-filter_complex", "fps={},scale=512:-1:flags=lanczos,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse".format(fps),
+        "-loop", "0",
+        output_gif_path
+    ]
+    try:
+        run_command(gif_command, cwd=PROJECT_ROOT) # Use run_command to execute FFmpeg
+        print(f"GIF created successfully at: {output_gif_path}")
+    except subprocess.CalledProcessError as e:
+        print(f"Error creating GIF: {e}")
+        raise
+
+def main(simulation_params_json=None, visualization_params_json=None):
     print("--- Step 1: Running Full Simulation ---")
-    simulation_output = run_command([sys.executable, RUN_SIMULATION_SCRIPT], cwd=PROJECT_ROOT)
+    
+    # Pass simulation_params_json to run_full_simulation.py
+    sim_command = [sys.executable, RUN_SIMULATION_SCRIPT]
+    if simulation_params_json:
+        sim_command.append(simulation_params_json)
+    simulation_output = run_command(sim_command, cwd=PROJECT_ROOT)
 
     # Parse simulation output to get necessary parameters for Blender visualization
-    fluid_data_path = None
-    inferred_visualization_params_str = None
-    blender_visualizer_cmd_str = None
-    
-    # Look for the line containing the Blender visualizer command
-    for line in simulation_output.splitlines():
-        if "blender --background --python" in line and BLENDER_VISUALIZER_SCRIPT in line:
-            blender_visualizer_cmd_str = line.strip()
-            break
-    
-    if not blender_visualizer_cmd_str:
-        print("Error: Could not find Blender visualizer command in simulation output.")
-        sys.exit(1)
-
-    # Extract fluid_data_path and inferred_visualization_params from the command string
-    # The command string is like: blender --background --python ... -- <fluid_data_path> <output_blend_path> <inferred_visualization_params_json>
-    parts = blender_visualizer_cmd_str.split(" -- ")
-    if len(parts) < 2:
-        print("Error: Malformed Blender visualizer command string.")
+    try:
+        result_data = json.loads(simulation_output)
+        fluid_data_path = result_data.get("output_data_path")
+        # Use the visualization_params_json passed to this main function
+        # If not provided, use inferred from simulation_agent
+        if visualization_params_json:
+            inferred_visualization_params_str = visualization_params_json
+        else:
+            inferred_visualization_params_str = json.dumps(result_data.get("inferred_visualization_params", {}))
+    except json.JSONDecodeError as e:
+        print(f"Error parsing simulation result JSON: {e}")
         sys.exit(1)
     
-    blender_args_after_double_dash = parts[1].split(maxsplit=2)
-    if len(blender_args_after_double_dash) < 3:
-        print("Error: Not enough arguments after -- in Blender visualizer command.")
+    if not fluid_data_path or not inferred_visualization_params_str:
+        print("Error: Could not parse fluid data path or visualization parameters from simulation output.")
         sys.exit(1)
-
-    fluid_data_path = blender_args_after_double_dash[0]
-    output_blend_file = blender_args_after_double_dash[1]
-    inferred_visualization_params_str = blender_args_after_double_dash[2] # This is a JSON string
 
     # Ensure output directory for frames exists
     blend_file_name_without_ext = "my_custom_fluid_vfx" # Set a base name
@@ -91,12 +104,28 @@ def main():
         "--",
         fluid_data_path,
         render_output_path,
-        inferred_visualization_params_str
+        # Pass both simulation and visualization params to oneshot script
+        simulation_params_json, # oneshot script needs sim params for time_steps etc.
+        inferred_visualization_params_str # Use the (inferred or provided) viz params
     ]
     run_command(blender_oneshot_cmd, cwd=PROJECT_ROOT)
 
+    # --- GIF Creation ---
+    gif_output_path = os.path.join(OUTPUTS_DIR, f"{blend_file_name_without_ext}.gif")
+    create_gif_from_frames(render_output_path, gif_output_path)
+
     print("\n--- Full pipeline completed successfully! ---")
     print(f"Rendered frames are in: {os.path.dirname(render_output_path)}")
+    print(f"Generated GIF is at: {gif_output_path}")
 
 if __name__ == "__main__":
-    main()
+    # Parse parameters from command line when run directly
+    if len(sys.argv) > 2:
+        sim_params_json = sys.argv[1]
+        viz_params_json = sys.argv[2]
+        main(sim_params_json, viz_params_json)
+    else:
+        # Run with default parameters if no args provided (for testing/dev)
+        # This will use the defaults hardcoded in simulation_agent.py
+        print("Running pipeline with default parameters. For custom parameters, provide JSON strings as arguments.")
+        main()
