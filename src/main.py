@@ -1,11 +1,11 @@
 # main.py
 import json
 import subprocess
-from llm_interface import LLMInterface
-from simulation_agent import SimulationAgent
-from style_agent import StyleAgent
-from feedback_agent import FeedbackAgent
-from render_agent import RenderAgent
+from src.llm_interface import LLMInterface
+from src.simulation_agent import SimulationAgent
+from src.style_agent import StyleAgent
+from src.feedback_agent import FeedbackAgent
+from src.render_agent import RenderAgent
 
 class EffectStokesOrchestrator:
     def __init__(self, llm_type: str = "ollama", llm_model: str = "llama2", llm_base_url: str = "http://localhost:11434"):

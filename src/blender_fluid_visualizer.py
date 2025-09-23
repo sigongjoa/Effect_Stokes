@@ -5,8 +5,8 @@ import json
 import sys
 
 # Add the src directory to the Python path to import ParamEvaluator
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'src')))
-from param_evaluator import ParamEvaluator
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from src.param_evaluator import ParamEvaluator
 
 class BlenderFluidVisualizer:
     def __init__(self):

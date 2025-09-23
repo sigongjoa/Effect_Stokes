@@ -67,7 +67,7 @@ def main(simulation_params_json=None, visualization_params_json=None):
     print("--- Step 1: Running Full Simulation ---")
     
     # Pass simulation_params_json to run_full_simulation.py
-    sim_command = [sys.executable, RUN_SIMULATION_SCRIPT]
+    sim_command = [sys.executable, "-m", "src.run_full_simulation"]
     if simulation_params_json:
         sim_command.append(simulation_params_json)
     else:

@@ -34,6 +34,7 @@ class LLMInterface:
         Provide the output in a single JSON object with two top-level keys: "simulation_params" and "visualization_params".
 
         **Important**: For parameters that can change over time, provide them as a string representing a mathematical function of 't' (time). For fixed parameters, provide them as their direct value.
+        **Crucially, ensure ALL mathematical expressions are enclosed in double quotes as strings.**
 
         **simulation_params** should include:
         - "grid_resolution": [int, int] (e.g., [101, 101])

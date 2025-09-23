@@ -1,11 +1,11 @@
 
 import os
 import json
-from llm_interface import LLMInterface
-from prompt_templates import PROMPT_TEMPLATES
+from src.llm_interface import LLMInterface
+from src.prompt_templates import PROMPT_TEMPLATES
 import numpy as np
-from fluid_simulator import FluidSimulator # Import the new FluidSimulator
-from param_evaluator import ParamEvaluator # Import ParamEvaluator
+from src.fluid_simulator import FluidSimulator # Import the new FluidSimulator
+from src.param_evaluator import ParamEvaluator # Import ParamEvaluator
 
 # Utility functions for parameter validation (adapted for function strings)
 param_evaluator = ParamEvaluator() # Initialize ParamEvaluator

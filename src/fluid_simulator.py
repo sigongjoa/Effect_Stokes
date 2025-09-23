@@ -1,7 +1,7 @@
 import numpy as np
 import os
 import json
-from param_evaluator import ParamEvaluator
+from src.param_evaluator import ParamEvaluator
 
 class FluidSimulator:
     def __init__(self):
@@ -67,7 +67,9 @@ class FluidSimulator:
             # Evaluate time-dependent parameters for the current time step
             current_sim_params = {}
             for key, value in simulation_params.items():
-                if isinstance(value, str):
+                if key in ["boundary_conditions", "initial_shape_type"]:
+                    current_sim_params[key] = value
+                elif isinstance(value, str):
                     try:
                         current_sim_params[key] = self.param_evaluator.evaluate(value, t=t)
                     except ValueError as e:

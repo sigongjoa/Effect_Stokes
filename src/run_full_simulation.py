@@ -2,10 +2,7 @@ import sys
 import os
 import json
 
-# Add the src directory to the Python path so we can import simulation_agent
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'src')))
-
-from simulation_agent import SimulationAgent
+from src.simulation_agent import SimulationAgent
 
 if __name__ == "__main__":
     agent = SimulationAgent()

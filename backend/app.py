@@ -1,3 +1,10 @@
+import sys
+import os
+
+# Add the project root to sys.path
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+sys.path.insert(0, PROJECT_ROOT)
+
 import eventlet
 eventlet.monkey_patch()
 
@@ -11,6 +18,15 @@ import threading
 import logging
 import re
 from src.param_evaluator import ParamEvaluator
+import tempfile
+import shutil
+import numpy as np
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+import io
+import base64
+from src.fluid_simulator import FluidSimulator
 
 # Initialize ParamEvaluator
 param_evaluator = ParamEvaluator()
@@ -247,23 +263,27 @@ def get_llm_inferred_params():
     effect_description = params.get("effect_description", {"vfx_type": "swirling vortex", "style": "blue liquid"})
 
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-    run_full_simulation_script = os.path.join(project_root, 'src', 'run_full_simulation.py')
     venv_python = os.path.join(project_root, 'venv', 'bin', 'python3')
 
     command = [
         venv_python,
-        run_full_simulation_script,
+        "-m", "src.run_full_simulation", # Run as a module
         "--infer_only",
         json.dumps(effect_description) # Pass effect_description as JSON string
     ]
 
     try:
+        # Get the current environment and set PYTHONPATH for the subprocess
+        env = os.environ.copy()
+        env['PYTHONPATH'] = project_root
+
         process = subprocess.run(
             command,
             cwd=project_root,
             capture_output=True,
             text=True,
-            check=True
+            check=True,
+            env=env # Pass the modified environment
         )
         logger.info(f"stdout from simulation script: {process.stdout}")
         logger.error(f"stderr from simulation script: {process.stderr}")
@@ -283,80 +303,88 @@ def get_llm_inferred_params():
         logger.error(f"An unexpected error occurred: {e}")
         return jsonify({"status": "error", "message": "An internal server error occurred."}), 500
 
+def _create_frame_image(u, v, x, y, frame_idx) -> str:
+    """
+    Generates a single frame image (quiver plot) from fluid data and returns it as a base64 string.
+    """
+    fig, ax = plt.subplots(figsize=(6, 6))
+    
+    # Downsample the data for a clearer plot
+    step = max(1, len(x) // 20) # Aim for about 20 arrows
+    x_s, y_s = x[::step], y[::step]
+    u_s, v_s = u[::step, ::step], v[::step, ::step]
+    X_s, Y_s = np.meshgrid(x_s, y_s)
+
+    ax.quiver(X_s, Y_s, u_s.T, v_s.T, scale=1, scale_units='xy') # Transpose u and v for correct orientation
+    ax.set_aspect('equal')
+    ax.set_title(f'Fluid Velocity Preview - Frame {frame_idx}')
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+
+    buf = io.BytesIO()
+    plt.savefig(buf, bbox_inches='tight', format='png')
+    plt.close(fig)
+    buf.seek(0)
+    
+    return base64.b64encode(buf.getvalue()).decode('utf-8')
+
 @app.route('/api/run_preview', methods=['POST'])
 def run_preview():
     params = request.get_json()
     sim_params_input = params.get("simulation_params", {})
-    viz_params_input = params.get("visualization_params", {})
-    preview_settings = params.get("preview_settings", {})
 
-    # Validate parameters
-    is_valid, error_msg = validate_params({"simulation_params": sim_params_input, "visualization_params": viz_params_input})
+    is_valid, error_msg = validate_params({
+        "simulation_params": sim_params_input,
+        "visualization_params": {} 
+    })
     if not is_valid:
-        return jsonify({"status": "error", "message": error_msg}), 400
+        if "visualization_params" not in error_msg:
+             return jsonify({"status": "error", "message": error_msg}), 400
 
-    duration_frames = preview_settings.get("duration_frames", 30)
-    # resolution_scale = preview_settings.get("resolution_scale", 0.5) # Not used in this backend part yet
+    output_dir = tempfile.mkdtemp(prefix="preview_sim_")
+    logger.info(f"Created temporary directory for preview: {output_dir}")
 
-    preview_data = {"frame_data": []}
+    try:
+        simulator = FluidSimulator()
+        preview_settings = params.get("preview_settings", {})
+        requested_frames = preview_settings.get("duration_frames", 30)
+        num_frames_for_preview = requested_frames # No cap on frames
+        sim_params_input['time_steps'] = num_frames_for_preview
 
-    for i in range(duration_frames):
-        t = i # Time variable 't' corresponds to the frame number
-        evaluated_sim_params = {}
-        evaluated_viz_params = {}
+        result = simulator.run_simulation(sim_params_input, output_dir)
 
-        # Evaluate simulation parameters
-        for key, value in sim_params_input.items():
-            if isinstance(value, str):
-                try:
-                    evaluated_sim_params[key] = param_evaluator.evaluate(value, t=t)
-                except ValueError as e:
-                    return jsonify({"status": "error", "message": f"Error evaluating simulation parameter '{key}': {e}"}), 400
-            elif isinstance(value, list):
-                # Handle lists that might contain string expressions (e.g., initial_shape_position)
-                evaluated_list = []
-                for item in value:
-                    if isinstance(item, str):
-                        try:
-                            evaluated_list.append(param_evaluator.evaluate(item, t=t))
-                        except ValueError as e:
-                            return jsonify({"status": "error", "message": f"Error evaluating list item in simulation parameter '{key}': {e}"}), 400
-                    else:
-                        evaluated_list.append(item)
-                evaluated_sim_params[key] = evaluated_list
-            else:
-                evaluated_sim_params[key] = value
-        
-        # Evaluate visualization parameters
-        for key, value in viz_params_input.items():
-            if isinstance(value, str):
-                try:
-                    evaluated_viz_params[key] = param_evaluator.evaluate(value, t=t)
-                except ValueError as e:
-                    return jsonify({"status": "error", "message": f"Error evaluating visualization parameter '{key}': {e}"}), 400
-            elif isinstance(value, list):
-                evaluated_list = []
-                for item in value:
-                    if isinstance(item, str):
-                        try:
-                            evaluated_list.append(param_evaluator.evaluate(item, t=t))
-                        except ValueError as e:
-                            return jsonify({"status": "error", "message": f"Error evaluating list item in visualization parameter '{key}': {e}"}), 400
-                    else:
-                        evaluated_list.append(item)
-                evaluated_viz_params[key] = evaluated_list
-            else:
-                evaluated_viz_params[key] = value
+        if result["status"] != "success":
+            return jsonify({"status": "error", "message": result.get("message", "Simulation failed.")}), 500
 
-        # Combine and store for the current frame
-        frame_data_entry = {
-            "frame": i,
-            **evaluated_sim_params,
-            **evaluated_viz_params
-        }
-        preview_data["frame_data"].append(frame_data_entry)
+        b64_images = []
+        for i in range(num_frames_for_preview):
+            frame_fluid_data_path = os.path.join(output_dir, f"fluid_data_frame_{i:04d}.npz")
+            if not os.path.exists(frame_fluid_data_path):
+                logger.warning(f"Fluid data for frame {i} not found at {frame_fluid_data_path}. Skipping frame.")
+                continue
+            
+            data = np.load(frame_fluid_data_path)
+            u, v, x, y = data['u'], data['v'], data['x'], data['y']
+            
+            b64_image = _create_frame_image(u, v, x, y, i)
+            b64_images.append(b64_image)
 
-    return jsonify({"status": "success", "message": "Preview data generated successfully.", "preview_data": preview_data}), 200
+        return jsonify({
+            "status": "success",
+            "message": "Preview frames generated successfully.",
+            "preview_data": {"frames": b64_images, "total_frames": len(b64_images)}
+        }), 200
+
+    except ValueError as e:
+        logger.error(f"Parameter evaluation error during preview: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 400
+    except Exception as e:
+        logger.error(f"An unexpected error occurred during preview: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+    finally:
+        if os.path.exists(output_dir):
+            shutil.rmtree(output_dir)
+            logger.info(f"Removed temporary directory: {output_dir}")
 
 # API Endpoint to stop the pipeline
 @app.route('/api/stop_pipeline', methods=['POST'])
